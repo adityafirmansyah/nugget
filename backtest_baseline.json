@@ -1,0 +1,58 @@
+{
+  "EMA12>EMA26 (trend)": {
+    "trades": 939,
+    "accuracy": 50.27,
+    "coverage_pct": 100.0,
+    "long_acc": 45.66,
+    "short_acc": 52.55
+  },
+  "close>SMA20": {
+    "trades": 969,
+    "accuracy": 48.61,
+    "coverage_pct": 100.0,
+    "long_acc": 45.01,
+    "short_acc": 51.25
+  },
+  "momentum(3) sign": {
+    "trades": 989,
+    "accuracy": 46.61,
+    "coverage_pct": 100.0,
+    "long_acc": 43.71,
+    "short_acc": 49.23
+  },
+  "momentum(1) sign": {
+    "trades": 989,
+    "accuracy": 50.25,
+    "coverage_pct": 100.0,
+    "long_acc": 47.54,
+    "short_acc": 52.68
+  },
+  "RSI14 >50 -> long": {
+    "trades": 969,
+    "accuracy": 48.19,
+    "coverage_pct": 100.0,
+    "long_acc": 45.0,
+    "short_acc": 50.64
+  },
+  "RSI14 mean-revert <30/>70": {
+    "trades": 222,
+    "accuracy": 51.35,
+    "coverage_pct": 22.9,
+    "long_acc": 51.59,
+    "short_acc": 51.04
+  },
+  "vol breakout: close>prev high": {
+    "trades": 526,
+    "accuracy": 45.25,
+    "coverage_pct": 53.2,
+    "long_acc": 41.84,
+    "short_acc": 48.08
+  },
+  "EMA12>EMA26 AND RSI>50 (confluence)": {
+    "trades": 939,
+    "accuracy": 50.69,
+    "coverage_pct": 100.0,
+    "long_acc": 45.09,
+    "short_acc": 52.45
+  }
+}

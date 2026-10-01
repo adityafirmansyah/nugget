@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db-shm
+*.db-wal
+archives/
+state/
+backups/
+nugget.db.pre-launch
