@@ -191,6 +191,57 @@ def run(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         return out
 
 
+def format_hourly_delivery(r: dict) -> str:
+    """Render the hourly cycle result as the Discord message.
+
+    Returns an EMPTY STRING for the silent cases (market closed, duplicate slot).
+    The cron runner suppresses delivery on empty stdout, so returning "" is what
+    keeps closed-market hours out of the channel entirely - the ledger still
+    records the gap, the channel just stays quiet.
+
+    Kept here rather than in the cron script so the delivery contract is
+    unit-testable without running the scheduler.
+    """
+    a = r.get("action")
+
+    if a in ("gap", "duplicate_slot_rejected"):
+        return ""
+
+    if a in ("fetch_failed", "error"):
+        return (f"⚠️ **Nugget hourly cycle FAILED** ({r.get('slot_wib')})\n"
+                f"`{a}`: {r.get('error')}")
+
+    p = r.get("prediction", {}) or {}
+    graded = [g for g in r.get("graded", []) if g.get("status") == "graded"]
+
+    lines = [
+        f"**Hourly cycle** — {str(r.get('slot_wib'))[:16]} WIB",
+        "",
+        f"**Call** — `{p.get('direction')}` "
+        f"(score {p.get('score')}, conf {p.get('confidence')})",
+        f"**Ref price** — ${p.get('ref_price')}  ·  "
+        f"noise threshold ${p.get('noise_threshold')}",
+    ]
+
+    if graded:
+        lines += ["", "**Graded**"]
+        for g in graded:
+            if g.get("noise"):
+                mark = "NOISE (excluded)"
+            elif g.get("correct") == 1:
+                mark = "WIN"
+            elif g.get("correct") == 0:
+                mark = "LOSS"
+            else:
+                mark = "no-call"
+            lines.append(f"• #{g['id']} {g['direction']} → "
+                         f"move {g['move']:+.2f} · **{mark}**")
+    else:
+        lines += ["", "_No predictions due for grading this hour._"]
+
+    return "\n".join(lines)
+
+
 def report(con) -> dict:
     """Honest summary: hit-rate with n, CI, and the base rate it must beat."""
     rows = [dict(r) for r in con.execute(
