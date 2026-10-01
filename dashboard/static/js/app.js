@@ -8,6 +8,12 @@ let currentPredictions = [];
 let equityChart = null;
 let distributionChart = null;
 
+// Lightweight Charts State
+let candleChart = null;
+let candleSeries = null;
+let currentInterval = '1h';
+let activeChartTab = 'candles';
+
 function setFilter(type, value) {
   if (type === 'days') currentFilter.days = value;
   if (type === 'signal') currentFilter.signal = value;
@@ -446,3 +452,214 @@ document.addEventListener('keydown', (e) => {
 // Auto-refresh every 30 seconds
 loadData();
 setInterval(loadData, 30000);
+
+// Initialize Chart & Live Ticker
+initCandleChart();
+loadLivePrice();
+setInterval(loadLivePrice, 15000); // 15s spot ticker refresh
+setInterval(refreshCandlesOnly, 30000); // 30s candle refresh
+
+function setChartTab(tab) {
+  activeChartTab = tab;
+  const tabCandles = document.getElementById('tabCandles');
+  const tabTv = document.getElementById('tabTradingView');
+  const btnCandles = document.getElementById('btn-tab-candles');
+  const btnTv = document.getElementById('btn-tab-tv');
+  const tfPills = document.getElementById('intervalPills');
+  const tvIframe = document.getElementById('tvIframe');
+
+  if (tab === 'candles') {
+    tabCandles.classList.remove('hidden');
+    tabTv.classList.add('hidden');
+    tfPills.classList.remove('hidden');
+
+    btnCandles.className = "px-3 py-1 rounded-md text-amber-400 font-semibold bg-slate-900 shadow";
+    btnTv.className = "px-3 py-1 rounded-md text-slate-400 hover:text-white";
+
+    if (candleChart) {
+      setTimeout(() => {
+        const container = document.getElementById('candleChartContainer');
+        candleChart.applyOptions({ width: container.clientWidth });
+      }, 50);
+    }
+  } else {
+    tabCandles.classList.add('hidden');
+    tabTv.classList.remove('hidden');
+    tfPills.classList.add('hidden');
+
+    btnTv.className = "px-3 py-1 rounded-md text-amber-400 font-semibold bg-slate-900 shadow";
+    btnCandles.className = "px-3 py-1 rounded-md text-slate-400 hover:text-white";
+
+    // Lazy load the TradingView embed iframe to save bandwidth
+    if (tvIframe.src === "about:blank") {
+      tvIframe.src = "https://s.tradingview.com/widgetembed/?symbol=OANDA%3AXAUUSD&interval=60&theme=dark&style=1&locale=en&hide_side_toolbar=1&allow_symbol_change=0&save_image=0";
+    }
+  }
+}
+
+function setCandleInterval(tf) {
+  currentInterval = tf;
+  ['15m', '1h', '4h', '1d'].forEach(t => {
+    const btn = document.getElementById(`btn-tf-${t}`);
+    if (btn) {
+      if (t === tf) {
+        btn.className = "px-2 py-1 rounded-md text-amber-400 font-semibold bg-slate-900 text-[11px] shadow";
+      } else {
+        btn.className = "px-2 py-1 rounded-md text-slate-400 hover:text-white text-[11px]";
+      }
+    }
+  });
+  loadCandlesAndMarkers();
+}
+
+async function loadLivePrice() {
+  try {
+    const res = await fetch('/api/live');
+    const d = await res.json();
+    if (d.ok && d.spot) {
+      document.getElementById('tickerSpot').textContent = `$${d.spot.toFixed(2)}`;
+      const sign = d.basis >= 0 ? '+' : '';
+      document.getElementById('tickerBasis').textContent = `${sign}$${d.basis.toFixed(2)} (${d.basis_pct}%)`;
+    }
+  } catch(e){}
+}
+
+function initCandleChart() {
+  const container = document.getElementById('candleChartContainer');
+  if (!container || !window.LightweightCharts) return;
+
+  candleChart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 384, // 96 tailwind height
+    layout: {
+      background: { color: 'transparent' },
+      textColor: '#94a3b8',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11,
+    },
+    grid: {
+      vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
+      horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: '#f59e0b', width: 1, style: 3 },
+      horzLine: { color: '#f59e0b', width: 1, style: 3 },
+    },
+    timeScale: {
+      borderColor: 'rgba(255, 255, 255, 0.08)',
+      timeVisible: true,
+      secondsVisible: false,
+    },
+    rightPriceScale: {
+      borderColor: 'rgba(255, 255, 255, 0.08)',
+      scaleMargins: { top: 0.1, bottom: 0.15 },
+    }
+  });
+
+  candleSeries = candleChart.addCandlestickSeries({
+    upColor: '#10b981',
+    downColor: '#f43f5e',
+    borderVisible: false,
+    wickUpColor: '#10b981',
+    wickDownColor: '#f43f5e',
+  });
+
+  // Crosshair legend update
+  candleChart.subscribeCrosshairMove(param => {
+    const legendEl = document.getElementById('legendValues');
+    if (!param.time || !param.seriesData || !param.seriesData.get(candleSeries)) {
+      return;
+    }
+    const data = param.seriesData.get(candleSeries);
+    legendEl.innerHTML = `O: <strong class="text-white">${data.open.toFixed(2)}</strong> H: <strong class="text-white">${data.high.toFixed(2)}</strong> L: <strong class="text-white">${data.low.toFixed(2)}</strong> C: <strong class="${data.close >= data.open ? 'text-emerald-400' : 'text-rose-400'}">${data.close.toFixed(2)}</strong>`;
+  });
+
+  // Responsive window resize
+  window.addEventListener('resize', () => {
+    if (candleChart && container) {
+      candleChart.applyOptions({ width: container.clientWidth });
+    }
+  });
+
+  loadCandlesAndMarkers();
+}
+
+async function refreshCandlesOnly() {
+  if (activeChartTab === 'candles') {
+    loadCandlesAndMarkers();
+  }
+}
+
+async function loadCandlesAndMarkers() {
+  if (!candleSeries) return;
+
+  try {
+    const [cRes, mRes] = await Promise.all([
+      fetch(`/api/candles?interval=${currentInterval}&limit=300`),
+      fetch('/api/markers')
+    ]);
+
+    const cData = await cRes.json();
+    const mData = await mRes.json();
+
+    if (cData.ok && cData.bars && cData.bars.length) {
+      candleSeries.setData(cData.bars);
+      
+      // Update Legend initial display with the newest closed bar
+      const last = cData.bars[cData.bars.length - 1];
+      const legendEl = document.getElementById('legendValues');
+      if (legendEl && last) {
+        legendEl.innerHTML = `O: <strong class="text-white">${last.open.toFixed(2)}</strong> H: <strong class="text-white">${last.high.toFixed(2)}</strong> L: <strong class="text-white">${last.low.toFixed(2)}</strong> C: <strong class="${last.close >= last.open ? 'text-emerald-400' : 'text-rose-400'}">${last.close.toFixed(2)}</strong>`;
+      }
+
+      // Map Nugget Predictions to Chart Markers
+      if (mData.ok && mData.markers) {
+        const markers = [];
+        
+        mData.markers.forEach(m => {
+          // Find the bar matching the prediction target time
+          if (!m.target_bar_utc) return;
+          const targetSec = Math.floor(new Date(m.target_bar_utc).getTime() / 1000);
+          
+          let color = '#94a3b8';
+          let shape = 'circle';
+          let text = `#${m.id} ${m.direction.toUpperCase()}`;
+
+          if (m.kind === 'win') {
+            color = '#10b981';
+            shape = m.direction === 'bullish' ? 'arrowUp' : 'arrowDown';
+            text = `#${m.id} WIN (${m.direction})`;
+          } else if (m.kind === 'loss') {
+            color = '#f43f5e';
+            shape = m.direction === 'bullish' ? 'arrowDown' : 'arrowUp';
+            text = `#${m.id} LOSS (${m.direction})`;
+          } else if (m.kind === 'noise') {
+            color = '#64748b';
+            shape = 'circle';
+            text = `#${m.id} NOISE`;
+          } else {
+            // Pending
+            color = '#f59e0b';
+            shape = m.direction === 'bullish' ? 'arrowUp' : 'arrowDown';
+            text = `#${m.id} PENDING (${m.direction})`;
+          }
+
+          markers.push({
+            time: targetSec,
+            position: m.direction === 'bullish' ? 'belowBar' : 'aboveBar',
+            color: color,
+            shape: shape,
+            text: text,
+          });
+        });
+
+        // Lightweight Charts demands markers sorted ascending by time
+        markers.sort((a, b) => a.time - b.time);
+        candleSeries.setMarkers(markers);
+      }
+    }
+  } catch(e) {
+    console.error('Failed to load chart candles/markers:', e);
+  }
+}

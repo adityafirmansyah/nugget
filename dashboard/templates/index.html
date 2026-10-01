@@ -6,6 +6,7 @@
   <title>Nugget — XAUUSD Quantitative Research Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/style.css">
@@ -48,8 +49,15 @@
       </div>
     </div>
 
-    <!-- Live indicator + Filters -->
+    <!-- Live indicator + Spot ticker + Filters -->
     <div class="flex items-center gap-4 text-xs font-mono">
+      <div id="liveTicker" class="hidden md:flex items-center gap-3 px-3 py-1 rounded-lg bg-slate-900 border border-slate-800">
+        <span class="text-slate-400 text-[11px]">SPOT XAU</span>
+        <span id="tickerSpot" class="font-bold text-white tabular">$0.00</span>
+        <span class="text-slate-600">|</span>
+        <span class="text-slate-400 text-[11px]">PAXG BASIS</span>
+        <span id="tickerBasis" class="tabular text-slate-300">+$0.00</span>
+      </div>
       <div class="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
         <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
         <span>GATEWAY ONLINE</span>
@@ -76,6 +84,47 @@
         <button onclick="setFilter('signal', 'all')" id="btn-sig-all" class="filter-btn px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold">All Signals</button>
         <button onclick="setFilter('signal', 'technical')" id="btn-sig-technical" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">Technical</button>
         <button onclick="setFilter('signal', 'sentiment')" id="btn-sig-sentiment" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">Sentiment</button>
+      </div>
+    </div>
+
+    <!-- LIVE CHARTS: Self-hosted Candlesticks + TradingView Reference -->
+    <div class="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+      <div class="p-4 sm:px-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-950/40">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-white">XAUUSD Live Candlesticks & Overlays</h2>
+            <span class="text-[10px] px-2 py-0.5 rounded font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">PREDICTION MARKERS</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-0.5">Nugget's predictions rendered on the exact bars they forecast. Green = WIN, Red = LOSS, Gray = NOISE.</p>
+        </div>
+        
+        <div class="flex items-center gap-2 text-xs font-mono">
+          <div class="flex items-center bg-slate-800/80 rounded-lg p-0.5 border border-slate-700/60">
+            <button onclick="setChartTab('candles')" id="btn-tab-candles" class="px-3 py-1 rounded-md text-amber-400 font-semibold bg-slate-900 shadow">Candlesticks</button>
+            <button onclick="setChartTab('tv')" id="btn-tab-tv" class="px-3 py-1 rounded-md text-slate-400 hover:text-white">TradingView Embed</button>
+          </div>
+          <div id="intervalPills" class="flex items-center bg-slate-800/80 rounded-lg p-0.5 border border-slate-700/60">
+            <button onclick="setCandleInterval('15m')" id="btn-tf-15m" class="px-2 py-1 rounded-md text-slate-400 hover:text-white text-[11px]">15m</button>
+            <button onclick="setCandleInterval('1h')" id="btn-tf-1h" class="px-2 py-1 rounded-md text-amber-400 font-semibold bg-slate-900 text-[11px] shadow">1h</button>
+            <button onclick="setCandleInterval('4h')" id="btn-tf-4h" class="px-2 py-1 rounded-md text-slate-400 hover:text-white text-[11px]">4h</button>
+            <button onclick="setCandleInterval('1d')" id="btn-tf-1d" class="px-2 py-1 rounded-md text-slate-400 hover:text-white text-[11px]">1d</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 1: Self-hosted Lightweight Charts (Canvas) -->
+      <div id="tabCandles" class="p-4 relative">
+        <div id="candleChartContainer" class="h-96 w-full"></div>
+        <div id="chartLegend" class="absolute top-6 left-6 text-xs font-mono pointer-events-none bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800/80 space-y-0.5">
+          <div class="text-slate-400 text-[11px]">XAUUSD · 1H · PAXGUSDT PROXY</div>
+          <div id="legendValues" class="text-slate-200">O: -- H: -- L: -- C: --</div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Embedded TradingView Widget (OANDA:XAUUSD) -->
+      <div id="tabTradingView" class="hidden h-96 w-full p-2 bg-black">
+        <iframe id="tvIframe" class="w-full h-full border-0 rounded-lg"
+          src="about:blank"></iframe>
       </div>
     </div>
 

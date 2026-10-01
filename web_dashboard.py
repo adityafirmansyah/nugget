@@ -140,6 +140,110 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
     }
 
 
+def get_candles(interval: str = "1h", limit: int = 300) -> dict:
+    """OHLCV bars for the self-hosted candlestick chart.
+
+    Data comes from the SAME feed Nugget predicts on (PAXGUSDT), so every marker
+    drawn on this chart lines up with the prices in her ledger. That is the whole
+    point of the self-hosted chart: an unrelated feed would make the overlays lie.
+    """
+    sys.path.insert(0, str(BASE_DIR))
+    import fetch_market as fm
+
+    allowed = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+    if interval not in allowed:
+        interval = "1h"
+    limit = max(60, min(int(limit or 300), 1000))
+
+    try:
+        bars = fm.fetch_candles(interval, limit)
+    except (fm.FetchError, fm.SchemaError) as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "bars": []}
+
+    return {
+        "ok": True,
+        "interval": interval,
+        "symbol": "XAUUSD (PAXGUSDT proxy)",
+        "bars": [{
+            # Lightweight Charts wants UNIX seconds
+            "time": b["open_time"] // 1000,
+            "open": b["open"], "high": b["high"],
+            "low": b["low"], "close": b["close"],
+            "volume": b["volume"],
+        } for b in bars],
+    }
+
+
+def get_markers() -> dict:
+    """Every graded prediction as a chart marker.
+
+    This is the payoff of the self-hosted chart: Nugget's own calls, placed on the
+    exact bar they were judged against, so her accuracy is visible instead of
+    inferred from a table.
+    """
+    con = get_db()
+    rows = con.execute("""
+        SELECT p.id, p.created_wib, p.direction, p.ref_price, p.noise_threshold,
+               p.signal_source, p.target_bar_utc,
+               o.realized_price, o.move, o.is_noise, o.correct, o.graded_wib
+        FROM predictions p
+        LEFT JOIN outcomes o ON o.prediction_id = p.id
+        ORDER BY p.id ASC
+    """).fetchall()
+    con.close()
+
+    out = []
+    for r in rows:
+        graded = r["graded_wib"] is not None
+        if r["is_noise"]:
+            kind, label, pos = "noise", f"#{r['id']} NOISE", "inBar"
+        elif r["correct"] == 1:
+            kind, label, pos = "win", f"#{r['id']} WIN", "belowBar"
+        elif r["correct"] == 0:
+            kind, label, pos = "loss", f"#{r['id']} LOSS", "aboveBar"
+        else:
+            kind, label, pos = "pending", f"#{r['id']} PENDING", "inBar"
+
+        out.append({
+            "id": r["id"],
+            "created_wib": r["created_wib"],
+            "target_bar_utc": r["target_bar_utc"],
+            "direction": r["direction"],
+            "ref_price": r["ref_price"],
+            "realized_price": r["realized_price"],
+            "noise_threshold": r["noise_threshold"],
+            "signal_source": r["signal_source"],
+            "graded": graded,
+            "kind": kind,
+            "correct": r["correct"],
+            "is_noise": r["is_noise"],
+            "move": r["move"],
+            "label": label,
+            "position": pos,
+        })
+    return {"ok": True, "markers": out}
+
+
+def get_live_price() -> dict:
+    """Sub-minute spot tick for the live price strip."""
+    sys.path.insert(0, str(BASE_DIR))
+    import fetch_market as fm
+    try:
+        spot = fm.fetch_spot()
+        proxies = fm.fetch_proxies()
+        paxg = proxies["paxg_usd"]
+        return {
+            "ok": True,
+            "spot": spot["price"],
+            "updated_at": spot["updated_at"],
+            "paxg": paxg,
+            "basis": round(paxg - spot["price"], 2),
+            "basis_pct": round((paxg - spot["price"]) / spot["price"] * 100, 3),
+        }
+    except (fm.FetchError, fm.SchemaError) as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -188,16 +292,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
             days = int(query["days"][0]) if "days" in query and query["days"][0].isdigit() else None
             signal = query.get("signal", [None])[0]
             data = get_stats_data(days=days, signal_source=signal)
+            self._json(data)
+            return
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode("utf-8"))
+        # API: /api/candles
+        if path == "/api/candles":
+            interval = query.get("interval", ["1h"])[0]
+            limit = query.get("limit", ["300"])[0]
+            self._json(get_candles(interval, limit))
+            return
+
+        # API: /api/markers
+        if path == "/api/markers":
+            self._json(get_markers())
+            return
+
+        # API: /api/live
+        if path == "/api/live":
+            self._json(get_live_price())
             return
 
         self.send_response(404)
         self.end_headers()
+
+    def _json(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode("utf-8"))
 
     def log_message(self, format, *args):
         pass
