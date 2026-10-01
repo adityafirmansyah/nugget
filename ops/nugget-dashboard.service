@@ -1,0 +1,16 @@
+[Unit]
+Description=Nugget XAUUSD Trading Dashboard (port 3000)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/aditf/projects/nugget
+ExecStart=/usr/bin/python3 /home/aditf/projects/nugget/web_dashboard.py
+Restart=always
+RestartSec=3
+Environment="HOME=/home/aditf"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
