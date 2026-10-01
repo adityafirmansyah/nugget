@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nugget — XAUUSD Quantitative Research Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Geist', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#fffbeb',
+              500: '#f59e0b',
+              600: '#d97706',
+              900: '#78350f',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="text-slate-200 min-h-screen">
+
+  <!-- Top Navbar -->
+  <header class="border-b border-slate-800 bg-[#0c121e]/80 backdrop-blur sticky top-0 z-50 px-6 py-3.5 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-lg shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+        🥇
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-white tracking-wide">NUGGET</span>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">XAUUSD QUANTS</span>
+        </div>
+        <div class="text-[11px] text-slate-400">Deterministic Falsifiable Prediction Ledger</div>
+      </div>
+    </div>
+
+    <!-- Live indicator + Filters -->
+    <div class="flex items-center gap-4 text-xs font-mono">
+      <div class="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span>GATEWAY ONLINE</span>
+      </div>
+      <div id="serverTime" class="text-slate-400 hidden sm:block">--:--:-- WIB</div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+
+    <!-- Filters Strip -->
+    <div class="flex flex-wrap items-center justify-between gap-4 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+      <div class="flex items-center gap-2 text-xs font-medium">
+        <span class="text-slate-400 mr-1">Time Horizon:</span>
+        <button onclick="setFilter('days', 1)" id="btn-days-1" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">24H</button>
+        <button onclick="setFilter('days', 7)" id="btn-days-7" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">7D</button>
+        <button onclick="setFilter('days', 30)" id="btn-days-30" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">30D</button>
+        <button onclick="setFilter('days', null)" id="btn-days-all" class="filter-btn px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold">ALL TIME</button>
+      </div>
+
+      <div class="flex items-center gap-2 text-xs font-medium">
+        <span class="text-slate-400 mr-1">Signal Source:</span>
+        <button onclick="setFilter('signal', 'all')" id="btn-sig-all" class="filter-btn px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold">All Signals</button>
+        <button onclick="setFilter('signal', 'technical')" id="btn-sig-technical" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">Technical</button>
+        <button onclick="setFilter('signal', 'sentiment')" id="btn-sig-sentiment" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">Sentiment</button>
+      </div>
+    </div>
+
+    <!-- Health / KPI Strip -->
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+      <!-- Hit Rate -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+        <div class="text-slate-400 text-xs font-medium">Hit Rate (True Edge)</div>
+        <div class="my-2">
+          <span id="kpiHitRate" class="text-2xl font-bold font-mono text-white tabular">--%</span>
+          <span id="kpiEdgeBadge" class="text-[11px] ml-1.5 px-1.5 py-0.5 rounded font-mono bg-slate-800 text-slate-400">vs 48%</span>
+        </div>
+        <div class="text-[11px] text-slate-500" id="kpiGradedCount">0 graded (non-noise)</div>
+      </div>
+
+      <!-- Net Points -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+        <div class="text-slate-400 text-xs font-medium">Net Realized Move</div>
+        <div class="my-2">
+          <span id="kpiNetPoints" class="text-2xl font-bold font-mono text-white tabular">0.00</span>
+          <span class="text-xs text-slate-400">pts</span>
+        </div>
+        <div class="text-[11px] text-slate-500" id="kpiWinLossRatio">W: 0 | L: 0</div>
+      </div>
+
+      <!-- Profit Factor -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+        <div class="text-slate-400 text-xs font-medium">Profit Factor</div>
+        <div class="my-2">
+          <span id="kpiProfitFactor" class="text-2xl font-bold font-mono text-amber-400 tabular">1.00</span>
+        </div>
+        <div class="text-[11px] text-slate-500">Gross Win / Gross Loss</div>
+      </div>
+
+      <!-- Noise Filter Ratio -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+        <div class="text-slate-400 text-xs font-medium">Noise Filtered</div>
+        <div class="my-2">
+          <span id="kpiNoiseCount" class="text-2xl font-bold font-mono text-slate-300 tabular">0</span>
+          <span class="text-xs text-slate-500">&lt; 0.5×ATR</span>
+        </div>
+        <div class="text-[11px] text-slate-500" id="kpiNoisePercent">0% filtered out</div>
+      </div>
+
+      <!-- Total Calls / Active -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+        <div class="text-slate-400 text-xs font-medium">Total Predictions</div>
+        <div class="my-2 flex items-baseline gap-2">
+          <span id="kpiTotalPreds" class="text-2xl font-bold font-mono text-white tabular">0</span>
+          <span id="kpiPendingBadge" class="text-[11px] text-amber-400 font-mono">0 pending</span>
+        </div>
+        <div class="text-[11px] text-slate-500">100% Append-Only</div>
+      </div>
+
+      <!-- Statistical Verdict -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+        <div class="text-slate-400 text-xs font-medium">Sample Status</div>
+        <div class="my-2">
+          <span id="kpiVerdict" class="text-sm font-bold font-mono px-2 py-1 rounded bg-slate-800 text-slate-300">COLLECTING</span>
+        </div>
+        <div class="text-[11px] text-slate-500">Goal: n &gt; 57 (Job 4)</div>
+      </div>
+    </div>
+
+    <!-- Charts Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Equity / Points Chart (2 Cols) -->
+      <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-sm font-semibold text-white">Cumulative Net Points (XAUUSD)</h2>
+            <p class="text-xs text-slate-400">Calculated exclusively on non-noise calls</p>
+          </div>
+          <span class="text-xs font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">POINTS CURVE</span>
+        </div>
+        <div class="h-64">
+          <canvas id="equityChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Win / Loss / Noise Distribution -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+        <div>
+          <h2 class="text-sm font-semibold text-white">Outcome Classification</h2>
+          <p class="text-xs text-slate-400 mb-4">Win vs Loss vs Noise-Filtered</p>
+          <div class="h-52 flex items-center justify-center">
+            <canvas id="distributionChart"></canvas>
+          </div>
+        </div>
+        <div class="border-t border-slate-800 pt-3 text-[11px] text-slate-400 flex justify-between font-mono">
+          <span>Wins: <strong id="distWinText" class="text-emerald-400">0</strong></span>
+          <span>Losses: <strong id="distLossText" class="text-rose-400">0</strong></span>
+          <span>Noise: <strong id="distNoiseText" class="text-slate-400">0</strong></span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Predictions Audit Ledger -->
+    <div class="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+      <div class="p-4 sm:px-6 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-semibold text-white">Cryptographic Prediction Ledger</h2>
+          <p class="text-xs text-slate-400">Append-only sequence. Predictions logged before outcome bar closes.</p>
+        </div>
+        <span class="text-xs font-mono text-emerald-400 flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> SHA256 CHAIN OK
+        </span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono">
+          <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 uppercase text-[10px] tracking-wider">
+            <tr>
+              <th class="py-3 px-4"># ID</th>
+              <th class="py-3 px-4">Created (WIB)</th>
+              <th class="py-3 px-4">Horizon</th>
+              <th class="py-3 px-4">Signal</th>
+              <th class="py-3 px-4">Direction</th>
+              <th class="py-3 px-4">Prediction Rationale / Key Drivers</th>
+              <th class="py-3 px-4 text-right">Ref Price</th>
+              <th class="py-3 px-4 text-right">Realized</th>
+              <th class="py-3 px-4 text-right">Move (pts)</th>
+              <th class="py-3 px-4 text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody id="ledgerTableBody" class="divide-y divide-slate-800/60 text-slate-300">
+            <tr>
+              <td colspan="10" class="text-center py-6 text-slate-500">Loading ledger data...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Details Modal -->
+  <div id="detailsModal" onclick="handleBackdropClick(event)" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div id="detailsModalCard" class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
+        <div class="flex items-center gap-3">
+          <div id="modalDirIcon" class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm"></div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span id="modalTitle" class="font-bold text-white text-base">Prediction Details</span>
+              <span id="modalHorizonBadge" class="text-xs px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-400">1H</span>
+            </div>
+            <div id="modalTimestamp" class="text-xs text-slate-400 font-mono">--</div>
+          </div>
+        </div>
+        <button onclick="closeDetailsModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-lg">&times;</button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-6 text-sm">
+        
+        <!-- Summary Box -->
+        <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-2">
+          <div class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Core Rationale & Voting Summary</div>
+          <p id="modalRationaleText" class="text-slate-200 leading-relaxed font-sans text-sm"></p>
+        </div>
+
+        <!-- Indicator Scorecard Breakdown -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Indicator Jury Voting Scorecard</span>
+            <span id="modalTotalScoreBadge" class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">Score: +0.00</span>
+          </div>
+          <div id="modalScorecardContainer" class="space-y-2 font-sans text-xs">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Key Metrics Grid -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+          <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
+            <div class="text-slate-400 text-[11px]">Reference Price</div>
+            <div id="modalRefPrice" class="text-white font-bold text-base mt-1">$0.00</div>
+          </div>
+          <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
+            <div class="text-slate-400 text-[11px]">Volatility Filter</div>
+            <div id="modalNoiseThr" class="text-slate-300 font-bold text-base mt-1">$0.00</div>
+          </div>
+          <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
+            <div class="text-slate-400 text-[11px]">Realized Price</div>
+            <div id="modalRealizedPrice" class="text-white font-bold text-base mt-1">—</div>
+          </div>
+          <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
+            <div class="text-slate-400 text-[11px]">Outcome Result</div>
+            <div id="modalOutcomeStatus" class="font-bold text-base mt-1">Pending</div>
+          </div>
+        </div>
+
+        <!-- Technical Parameters Breakdown -->
+        <div class="space-y-3">
+          <div class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Technical Confluence Factors</div>
+          <div id="modalFeaturesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono">
+            <!-- Injected via JS -->
+          </div>
+        </div>
+
+        <!-- Market Sources Context -->
+        <div id="modalSourcesSection" class="space-y-2 text-xs">
+          <div class="text-slate-400 uppercase font-mono tracking-wider font-semibold text-[11px]">Market State at Decision Time</div>
+          <div id="modalSourcesText" class="text-slate-400 bg-slate-950/30 p-3 rounded-lg border border-slate-800/60 font-mono text-[11px]"></div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs font-mono text-slate-500">
+        <span>Append-only cryptographic record</span>
+        <button onclick="closeDetailsModal()" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors">Close</button>
+      </div>
+
+    </div>
+  </div>
+
+  <footer class="max-w-7xl mx-auto px-6 py-8 text-center text-xs text-slate-500 border-t border-slate-800/80 mt-12">
+    <div>Nugget Quantitative Trading Research — Operating autonomously under Hermes Orchestrator.</div>
+    <div class="text-[11px] text-slate-600 mt-1">Learning instrument and reference only. Explicitly NOT financial advice.</div>
+  </footer>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
