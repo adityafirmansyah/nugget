@@ -19,6 +19,9 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+import predictor  # noqa: E402
+
 DB_PATH = BASE_DIR / "nugget.db"
 DASHBOARD_DIR = BASE_DIR / "dashboard"
 TEMPLATES_DIR = DASHBOARD_DIR / "templates"
@@ -27,6 +30,28 @@ PORT = 3000
 
 UTC = timezone.utc
 WIB = timezone(timedelta(hours=7))
+
+
+def _contributions_for_row(r: dict) -> dict:
+    """Per-indicator score contributions for one prediction row.
+
+    `notes` only carries contrib=... for the handful of rows written before
+    the human-readable rationale prose replaced it (cycle.py always prefers
+    `reason` when present, so the JSON fallback stopped firing). Recomputing
+    from features_json + params_json is equivalent and works for EVERY row,
+    because predictor.score() is a pure function of exactly those two fields
+    - nothing here depends on notes, and nothing is written back to the
+    ledger (which is append-only and hash-chained; notes must stay as-is).
+    """
+    try:
+        features = json.loads(r.get("features_json") or "{}")
+        params = json.loads(r.get("params_json") or "null")
+        if not features:
+            return {}
+        _, contrib = predictor.score(features, params)
+        return contrib
+    except (ValueError, TypeError, KeyError):
+        return {}
 
 
 def get_db():
@@ -106,6 +131,7 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
         SELECT 
             p.id, p.created_wib, p.horizon, p.direction, p.confidence, p.ref_price, 
             p.noise_threshold, p.signal_source, p.notes, p.features_json, p.inputs_json,
+            p.params_json,
             o.graded_wib, o.realized_price, o.move, o.is_noise, o.correct, o.base_rate
         FROM predictions p
         LEFT JOIN outcomes o ON o.prediction_id = p.id
@@ -113,6 +139,8 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
         LIMIT 50
     """
     recent_rows = [dict(r) for r in con.execute(recent_sql).fetchall()]
+    for r in recent_rows:
+        r["contributions"] = _contributions_for_row(r)
 
     con.close()
 
@@ -195,14 +223,21 @@ def get_markers() -> dict:
     out = []
     for r in rows:
         graded = r["graded_wib"] is not None
-        if r["is_noise"]:
+        if not graded:
+            kind, label, pos = "pending", f"#{r['id']} PENDING", "inBar"
+        elif r["is_noise"]:
             kind, label, pos = "noise", f"#{r['id']} NOISE", "inBar"
         elif r["correct"] == 1:
             kind, label, pos = "win", f"#{r['id']} WIN", "belowBar"
         elif r["correct"] == 0:
             kind, label, pos = "loss", f"#{r['id']} LOSS", "aboveBar"
         else:
-            kind, label, pos = "pending", f"#{r['id']} PENDING", "inBar"
+            # Graded, not noise, but correct is still NULL: this is a
+            # resolved "no_call" - Nugget declined to pick a direction, so
+            # win/loss doesn't apply, but the bar DID close and the real
+            # price WAS recorded. Must render distinctly from a row that
+            # hasn't reached its target bar yet (graded=False above).
+            kind, label, pos = "no_call_resolved", f"#{r['id']} NO-CALL", "inBar"
 
         out.append({
             "id": r["id"],

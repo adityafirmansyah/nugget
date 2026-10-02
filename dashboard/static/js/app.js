@@ -269,14 +269,12 @@ function openDetailsModal(id) {
   document.getElementById('modalHorizonBadge').textContent = p.horizon.toUpperCase();
   document.getElementById('modalTimestamp').textContent = `${p.created_wib} (${p.signal_source})`;
 
-  // Parse contributions
-  let contribs = {};
-  if (p.notes && p.notes.includes("contrib=")) {
-    try {
-      const match = p.notes.match(/contrib=({.*?})/);
-      if (match) contribs = JSON.parse(match[1]);
-    } catch(e){}
-  }
+  // Contributions: computed server-side from features_json+params_json for
+  // every technical prediction (predictor.score() is pure), so this works
+  // for rows whose `notes` holds prose instead of contrib=... JSON.
+  // Sentiment-sourced predictions genuinely have no indicator jury - an
+  // empty object here is correct for them, not a bug.
+  const contribs = p.contributions || {};
 
   // Populate Easy-to-understand Scorecard
   const scoreContainer = document.getElementById('modalScorecardContainer');
@@ -372,7 +370,9 @@ function openDetailsModal(id) {
 
     document.getElementById('modalRationaleText').innerHTML = summaryHtml;
   } else {
-    scoreContainer.innerHTML = `<div class="text-slate-500 py-3 text-center">Standard indicator calculations logged.</div>`;
+    scoreContainer.innerHTML = p.signal_source === 'sentiment'
+      ? `<div class="text-slate-500 py-3 text-center">This call came from the sentiment/news job, not the technical indicator jury - no per-indicator scorecard applies.</div>`
+      : `<div class="text-slate-500 py-3 text-center">No indicator contributions available for this prediction.</div>`;
     document.getElementById('modalRationaleText').textContent = p.notes || "Technical indicators confluence score calculated prior to bar formation.";
   }
   document.getElementById('modalRefPrice').textContent = `$${p.ref_price.toFixed(2)}`;
@@ -638,8 +638,15 @@ async function loadCandlesAndMarkers() {
             color = '#64748b';
             shape = 'circle';
             text = `#${m.id} NOISE`;
+          } else if (m.kind === 'no_call_resolved') {
+            // Graded, but Nugget abstained from a direction - win/loss does
+            // not apply. Distinct slate dot so it reads as "resolved, no
+            // call" rather than "still waiting" (amber PENDING below).
+            color = '#71717a';
+            shape = 'circle';
+            text = `#${m.id} NO-CALL (resolved)`;
           } else {
-            // Pending
+            // Pending: has not reached its target bar yet.
             color = '#f59e0b';
             shape = m.direction === 'bullish' ? 'arrowUp' : 'arrowDown';
             text = `#${m.id} PENDING (${m.direction})`;
