@@ -82,10 +82,21 @@ def day_ahead_evidence(con, now: datetime) -> dict:
     con_spot = None
     snap = fm.collect()
     candles = snap["candles"]
-    feats = predictor.compute_features(candles)
-    p = predictor.predict(candles)
+    dxy_bars = snap.get("dxy_proxy")
+    feats = predictor.compute_features(candles, dxy_bars)
+    p = predictor.predict(candles, dxy_bars=dxy_bars)
     base = stats.summarize([dict(r) for r in con.execute(
         """SELECT o.correct, o.is_noise, o.base_rate FROM outcomes o""")])
+
+    # Real yield (US 10Y TIPS, DFII10): daily-cadence macro context, NOT a
+    # jury vote - it updates once a business day, so folding it into the
+    # hourly score would just re-score the same stale value 23 times. It is
+    # surfaced here for the daily report's narrative only.
+    real_yield = None
+    try:
+        real_yield = fm.fetch_real_yield()
+    except (fm.FetchError, fm.SchemaError):
+        pass  # soft-optional: a missing macro context must not block the call
 
     # macro events in the next 24h
     upcoming = []
@@ -118,6 +129,7 @@ def day_ahead_evidence(con, now: datetime) -> dict:
         "model_version": p["model_version"],
         "track_record": base,
         "high_impact_24h": upcoming,
+        "real_yield_10y": real_yield,
         "ledger_counts": {
             t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
             for t in ("predictions", "outcomes", "gaps", "fetch_errors")},

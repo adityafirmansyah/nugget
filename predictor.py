@@ -57,7 +57,17 @@ def atr(highs, lows, closes, period=14):
 
 
 def build_params():
-    """The parameter set. Weights are v1 priors, to be replaced by measured ones."""
+    """The parameter set. Weights are v1 priors, to be replaced by measured ones.
+
+    `session_sweep` and `dxy_proxy` are NEW indicators added after the v1 set
+    was live. Both start at weight 0.0 (INERT): they are computed and recorded
+    in every prediction's features_json/contributions so there is a full
+    history to backtest against, but they contribute NOTHING to the score or
+    the direction Nugget actually calls until job 4 (improve.py) runs its
+    train/held-out gate and finds they measurably help - the same promotion
+    discipline every other weight went through. Do not hand-raise these
+    weights; let the gate earn it.
+    """
     return {
         "trend": {"weight": 0.25, "lookback": [12, 26]},
         "position": {"weight": 0.20, "lookback": 20},
@@ -65,11 +75,74 @@ def build_params():
         "rsi": {"weight": 0.20, "lookback": 14},
         "breadth": {"weight": 0.10, "lookback": 6},
         "volume_confirm": {"weight": 0.10, "lookback": 24},
+        "session_sweep": {"weight": 0.0, "lookback": 8},
+        "dxy_proxy": {"weight": 0.0, "lookback": 24},
     }
 
 
-def compute_features(bars: list[dict]) -> dict:
-    """Technical feature set from OHLCV bars. Last bar = 'now'."""
+def session_sweep_signal(bars: list[dict]) -> int:
+    """Liquidity-sweep microstructure: did price take out the Asian session's
+    high/low and then reject back inside it?
+
+    Institutional desks read this as a stop-run: price is pushed through a
+    session extreme to trigger resting stops/liquidity, then reverses - the
+    reversal, not the breakout, is the signal. Needs only OHLC we already
+    fetch every hour; no new API call.
+
+    Returns +1 (swept the low, closed back above -> bullish), -1 (swept the
+    high, closed back below -> bearish), or 0 (no sweep / not enough bars).
+    Asian session window is approximated as UTC 00:00-08:00 (Tokyo + most of
+    the Singapore/HK morning) - a coarse but zero-dependency proxy.
+    """
+    if len(bars) < 32 or "open_time" not in bars[0]:
+        return 0
+
+    from datetime import datetime, timezone
+    asian_bars = []
+    for b in bars[-32:-1]:  # the window BEFORE the current/last bar
+        hour = datetime.fromtimestamp(b["open_time"] / 1000, timezone.utc).hour
+        if 0 <= hour < 8:
+            asian_bars.append(b)
+    if len(asian_bars) < 4:
+        return 0
+
+    asian_high = max(b["high"] for b in asian_bars)
+    asian_low = min(b["low"] for b in asian_bars)
+    last = bars[-1]
+
+    if last["low"] < asian_low and last["close"] > asian_low:
+        return 1
+    if last["high"] > asian_high and last["close"] < asian_high:
+        return -1
+    return 0
+
+
+def dxy_proxy_roc(dxy_bars: list[dict] | None, lookback: int = 24) -> float | None:
+    """Rate-of-change on the EURUSDT proxy over `lookback` bars, or None.
+
+    This is EUR direction, which is DOLLAR-INVERSE: EUR up usually means the
+    dollar is weakening, which is a tailwind for dollar-priced gold. The sign
+    flip happens in score(), not here - this function just reports what the
+    proxy actually did.
+    """
+    if not dxy_bars or len(dxy_bars) <= lookback:
+        return None
+    closes = [b["close"] for b in dxy_bars]
+    if closes[-(lookback + 1)] == 0:
+        return None
+    return (closes[-1] - closes[-(lookback + 1)]) / closes[-(lookback + 1)] * 100
+
+
+def compute_features(bars: list[dict], dxy_bars: list[dict] | None = None) -> dict:
+    """Technical feature set from OHLCV bars. Last bar = 'now'.
+
+    `dxy_bars` is OPTIONAL and additive: every existing caller that passes
+    only `bars` still gets back exactly the same keys it got before, plus the
+    two new ones below with a safe None/0 default. This is what keeps old
+    stored features_json (which never has these keys) scoring correctly
+    through score()'s .get() lookups - this function and that one are the
+    only two places that need to agree on the new keys' defaults.
+    """
     closes = [b["close"] for b in bars]
     highs = [b["high"] for b in bars]
     lows = [b["low"] for b in bars]
@@ -95,6 +168,8 @@ def compute_features(bars: list[dict]) -> dict:
         "vol_vs_avg": (vols[-1] / avg_vol) if avg_vol else None,
         "atr_pct": (a / closes[-1] * 100) if a else None,
         "bars": len(bars),
+        "session_sweep": session_sweep_signal(bars),
+        "dxy_roc24": dxy_proxy_roc(dxy_bars, 24),
     }
 
 
@@ -131,6 +206,21 @@ def score(f: dict, params: dict | None = None) -> tuple[float, dict]:
         direction = 1 if contrib.get("trend", 0) >= 0 else -1
         strength = max(-1.0, min(1.0, (f["vol_vs_avg"] - 1.0) / 1.0))
         contrib["volume_confirm"] = p["weight"] * direction * strength
+
+    # New indicators (see build_params docstring: weight 0.0 until promoted).
+    # params.get() tolerates an old stored params_json or an improve.py
+    # candidate dict that predates these keys - defaulting to weight 0.0
+    # reproduces "not in the jury yet" rather than raising KeyError.
+    p = params.get("session_sweep", {"weight": 0.0})
+    sweep = f.get("session_sweep")
+    if sweep:
+        contrib["session_sweep"] = p["weight"] * max(-1.0, min(1.0, float(sweep)))
+
+    p = params.get("dxy_proxy", {"weight": 0.0})
+    dxy_roc = f.get("dxy_roc24")
+    if dxy_roc is not None:
+        # EUR up ~ dollar down ~ gold tailwind, so the sign is INVERTED here.
+        contrib["dxy_proxy"] = -p["weight"] * max(-1.0, min(1.0, dxy_roc / 1.0))
 
     total = sum(contrib.values())
     total = max(-1.0, min(1.0, total))
@@ -189,9 +279,14 @@ def explain_prediction(features: dict, contributions: dict, direction: str, scor
     return " ".join(parts)
 
 
-def predict(bars: list[dict], params: dict | None = None) -> dict:
-    """Full decision: direction, confidence, features, contributions."""
-    features = compute_features(bars)
+def predict(bars: list[dict], params: dict | None = None,
+           dxy_bars: list[dict] | None = None) -> dict:
+    """Full decision: direction, confidence, features, contributions.
+
+    `dxy_bars` is optional; omitting it just means the dxy_proxy feature is
+    None (and, since its weight defaults to 0.0, contributes nothing).
+    """
+    features = compute_features(bars, dxy_bars)
     s, contrib = score(features, params)
 
     if abs(s) < ABSTAIN_BAR:

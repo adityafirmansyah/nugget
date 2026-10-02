@@ -131,6 +131,24 @@ def candidate_grid() -> list[dict]:
 
     # more permissive
     out.append({"name": "permissive", "params": copy.deepcopy(base), "abstain_bar": 0.08})
+
+    # session-sweep activated: give the liquidity-sweep microstructure signal
+    # a real weight (carved from volume_confirm, its weakest-measured peer per
+    # the dashboard contribution history) and see if the held-out gate agrees
+    # it earns a place in the jury. Starts at 0.0 in the incumbent; this is
+    # the FIRST candidate that ever tests it non-zero.
+    p = copy.deepcopy(base)
+    p["session_sweep"]["weight"] = 0.10
+    p["volume_confirm"]["weight"] = 0.0
+    out.append({"name": "sweep-activated", "params": p, "abstain_bar": 0.18})
+
+    # dxy-proxy activated: same treatment for the EURUSDT-as-dollar-direction
+    # cross-asset signal, carved from breadth.
+    p = copy.deepcopy(base)
+    p["dxy_proxy"]["weight"] = 0.10
+    p["breadth"]["weight"] = 0.0
+    out.append({"name": "dxy-activated", "params": p, "abstain_bar": 0.18})
+
     return out
 
 

@@ -141,7 +141,7 @@ def run(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         out["graded"] = graded
 
         # ---- 5. predict the next bar -------------------------------------
-        p = predictor.predict(candles)
+        p = predictor.predict(candles, dxy_bars=snap.get("dxy_proxy"))
         target = slot + timedelta(hours=1)
         ref = snap["spot"]["price"]
         inputs = {

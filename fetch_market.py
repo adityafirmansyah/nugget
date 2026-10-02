@@ -142,6 +142,41 @@ def _get_json(url: str, host: str) -> dict | list:
     raise FetchError(f"{host}: {last} (after {ATTEMPTS} attempts)")
 
 
+def _get_text(url: str, host: str, *, user_agent: str | None = None) -> str:
+    """GET with retry+backoff+jitter, returning raw text. Raises FetchError only.
+
+    Same transport contract as _get_json (circuit breaker, backoff, jitter) but
+    for non-JSON bodies (FRED serves CSV). `user_agent` overrides the module
+    default for hosts that behave differently per UA (FRED times out on the
+    Chrome-spoofed UA every other source uses, but answers instantly for a
+    plain one) - this does not touch the shared UA used by every JSON source.
+    """
+    if not circuit_allows(host):
+        raise FetchError(f"{host}: circuit open (backing off)")
+
+    ua = user_agent or UA
+    last = None
+    for i in range(ATTEMPTS):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": ua})
+            with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+                body = r.read().decode("utf-8", "replace")
+            circuit_record(host, True)
+            return body
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}"
+        except urllib.error.URLError as e:
+            last = f"URLError {e.reason}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+
+        if i < ATTEMPTS - 1:
+            time.sleep(BACKOFF_BASE_S * (2 ** i) + random.uniform(0, BACKOFF_BASE_S))
+
+    circuit_record(host, False)
+    raise FetchError(f"{host}: {last} (after {ATTEMPTS} attempts)")
+
+
 def _num(obj, key, where):
     """Numeric field that may legitimately arrive as a string.
 
@@ -272,6 +307,85 @@ def fetch_calendar() -> list[dict]:
     return out
 
 
+def fetch_dxy_proxy_candles(interval: str = "1h", limit: int = 200) -> list[dict]:
+    """EURUSDT OHLCV as a dollar-direction proxy (inverse-ish of DXY).
+
+    There is no free, keyless, live DXY index feed. EUR/USD carries the
+    heaviest weight in the real DXY basket, so EURUSDT direction is a usable
+    stand-in for "is the dollar strengthening or weakening right now" at
+    hourly cadence - EUR up ~ dollar down ~ tailwind for dollar-priced gold.
+    This is a PROXY, not DXY itself; keep it labelled as such everywhere it
+    is stored so nobody mistakes it for the real index later.
+    """
+    host = "data-api.binance.vision"
+    raw = _get_json(f"https://{host}/api/v3/klines"
+                    f"?symbol=EURUSDT&interval={interval}&limit={limit}", host)
+    if not isinstance(raw, list) or len(raw) < 30:
+        raise SchemaError(f"binance.vision(EURUSDT): expected >=30 klines, got "
+                          f"{len(raw) if isinstance(raw, list) else type(raw).__name__}")
+    out = []
+    for i, k in enumerate(raw):
+        if not isinstance(k, list) or len(k) < 9:
+            raise SchemaError(f"binance.vision(EURUSDT): malformed kline at {i}")
+        try:
+            out.append({
+                "open_time": int(k[0]), "open": float(k[1]), "high": float(k[2]),
+                "low": float(k[3]), "close": float(k[4]), "volume": float(k[5]),
+            })
+        except (TypeError, ValueError) as e:
+            raise SchemaError(f"binance.vision(EURUSDT): kline {i} unparseable ({e})")
+    last_close = datetime.fromtimestamp(out[-1]["open_time"] / 1000, UTC)
+    age_h = (datetime.now(UTC) - last_close).total_seconds() / 3600
+    if age_h > 3:
+        raise SchemaError(f"binance.vision(EURUSDT): last bar is {age_h:.1f}h old (stale)")
+    return out
+
+
+def fetch_real_yield() -> dict:
+    """US 10Y TIPS real yield (FRED DFII10). Daily close, NOT hourly.
+
+    Opportunity-cost driver for gold: higher real yields raise the cost of
+    holding a non-yielding asset. FRED updates once per business day, so
+    this is for the DAILY job only - calling it every hour would just
+    re-read the same stale value and give a false sense of a live signal.
+    """
+    host = "fred.stlouisfed.org"
+    body = _get_text(f"https://{host}/graph/fredgraph.csv?id=DFII10", host,
+                     user_agent="Mozilla/5.0")
+    lines = [l for l in body.strip().splitlines() if l.strip()]
+    if len(lines) < 2:
+        raise SchemaError("fred(DFII10): empty or truncated CSV")
+    header = lines[0].split(",")
+    if header != ["observation_date", "DFII10"]:
+        raise SchemaError(f"fred(DFII10): unexpected header {header!r}")
+
+    # Walk back from the most recent row - FRED marks non-trading days with
+    # "." instead of omitting the row, so the last line is not always usable.
+    for line in reversed(lines[1:]):
+        parts = line.split(",")
+        if len(parts) != 2:
+            continue
+        date_str, val_str = parts
+        if val_str == ".":
+            continue
+        try:
+            value = float(val_str)
+        except ValueError:
+            continue
+        try:
+            as_of = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
+        except ValueError:
+            raise SchemaError(f"fred(DFII10): bad date {date_str!r}")
+        age_days = (datetime.now(UTC) - as_of).total_seconds() / 86400
+        if age_days > 10:
+            # FRED can lag a holiday/weekend, but >10 days means the series
+            # itself is stuck - treat as stale rather than silently stale-using it.
+            raise SchemaError(f"fred(DFII10): latest value is {age_days:.1f}d old (stale)")
+        return {"value": value, "as_of": date_str, "source": host}
+
+    raise SchemaError("fred(DFII10): no usable (non-missing) row found")
+
+
 def fetch_ticker() -> dict:
     """24h ticker: session high/low, spread, volume."""
     host = "data-api.binance.vision"
@@ -303,7 +417,8 @@ def collect() -> dict:
 
     for name, fn in (("spot", fetch_spot), ("proxies", fetch_proxies),
                      ("ticker", fetch_ticker), ("candles", fetch_candles),
-                     ("calendar", fetch_calendar)):
+                     ("calendar", fetch_calendar),
+                     ("dxy_proxy", fetch_dxy_proxy_candles)):
         try:
             snap[name] = fn()
             status[name] = "ok"
