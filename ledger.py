@@ -207,6 +207,24 @@ def _last_hash(con) -> str:
     return r["row_hash"] if r else "GENESIS"
 
 
+def _last_outcome_hash(con) -> str:
+    """Head of the outcomes chain = the row graded LAST, not the highest pid.
+
+    prediction_id is the *forecast's* id, so a late-graded prediction (its
+    target bar already passed, graded hours later) inserts MID-chain, and when
+    one grading pass writes both a backlog row and the current row, both point
+    at the SAME parent (fork) - the chain is a tree, not a line. This sets the
+    next row's parent to the newest-graded outcome so future writes stay
+    linear in (graded_utc, prediction_id); verify_chain checks the historical
+    fork as a tree. graded_utc increases monotonically across writes and the
+    pid tiebreak keeps same-second grading deterministic.
+    """
+    r = con.execute(
+        "SELECT row_hash FROM outcomes "
+        "ORDER BY graded_utc DESC, prediction_id DESC LIMIT 1").fetchone()
+    return r["row_hash"] if r else "GENESIS"
+
+
 def verify_chain(con) -> dict:
     """Recompute the whole chain. Any edit to any row breaks it.
 
@@ -226,18 +244,57 @@ def verify_chain(con) -> dict:
                     "reason": "row_hash mismatch"}
         prev = r["row_hash"]
 
-    o_prev = "GENESIS"
-    for r in con.execute("SELECT * FROM outcomes ORDER BY prediction_id ASC"):
-        # prediction_id IS part of the payload (it is known at write time), so it
+    # Outcomes are a TREE, not a line: record_outcome picks its parent as the
+    # outcome with MAX(prediction_id) at grading time, so a single grading pass
+    # that catches up a backlogged row (low pid) alongside the current row
+    # (high pid) makes BOTH reference the same parent. No total order - by pid
+    # or by graded_utc - can linearize that fork (historically: pid13, graded
+    # a day late, and pid40 of the same pass BOTH reference pid39). So verify
+    # the structure the writer actually wrote:
+    #   1. exactly one GENESIS root,
+    #   2. every prev_hash resolves (GENESIS or another recorded outcome),
+    #   3. every row_hash re-derives from its own recorded prev,
+    #   4. every row is reachable from the root.
+    # A forged/edited payload still breaks (3); a lost or foreign row still
+    # breaks (2)/(4). (Append-only triggers make mid-chain loss a disk-level
+    # event; (2)/(4) catch it, and the tail regressions the nightly backup
+    # check covers.)
+    o_rows = [dict(r) for r in con.execute("SELECT * FROM outcomes")]
+    if o_rows:
+        by_hash = {r["row_hash"]: r for r in o_rows}
+        roots = [r for r in o_rows if r["prev_hash"] == "GENESIS"]
+        if len(roots) != 1:
+            return {"ok": False, "table": "outcomes",
+                    "id": (roots[0]["prediction_id"] if roots else None),
+                    "reason": f"expected exactly 1 GENESIS root, found {len(roots)}"}
+        for r in o_rows:
+            if r["prev_hash"] != "GENESIS" and r["prev_hash"] not in by_hash:
+                return {"ok": False, "table": "outcomes", "id": r["prediction_id"],
+                        "reason": "prev_hash points to no recorded outcome (orphan)"}
+        # prediction_id IS part of the payload (known at write time), so it
         # stays in the re-hash.
-        payload = {k: r[k] for k in r.keys() if k not in ("row_hash", "prev_hash")}
-        if r["prev_hash"] != o_prev:
-            return {"ok": False, "table": "outcomes", "id": r["prediction_id"],
-                    "reason": "prev_hash mismatch"}
-        if _row_hash(o_prev, payload) != r["row_hash"]:
-            return {"ok": False, "table": "outcomes", "id": r["prediction_id"],
-                    "reason": "row_hash mismatch"}
-        o_prev = r["row_hash"]
+        for r in o_rows:
+            payload = {k: r[k] for k in r.keys() if k not in ("row_hash", "prev_hash")}
+            if _row_hash(r["prev_hash"], payload) != r["row_hash"]:
+                return {"ok": False, "table": "outcomes", "id": r["prediction_id"],
+                        "reason": "row_hash mismatch"}
+        seen, stack = set(), [roots[0]["row_hash"]]
+        while stack:
+            h = stack.pop()
+            for r in o_rows:
+                if r["prev_hash"] == h and r["row_hash"] not in seen:
+                    seen.add(r["row_hash"])
+                    stack.append(r["row_hash"])
+        stranded = [r["prediction_id"] for r in o_rows
+                    if r["prev_hash"] != "GENESIS" and r["row_hash"] not in seen]
+        if stranded:
+            return {"ok": False, "table": "outcomes", "id": stranded[0],
+                    "reason": "outcome not reachable from GENESIS root"}
+        # The head is the row graded LAST - what the next write builds on
+        # (record_outcome's _last_outcome_hash). Total-graded ordering, then
+        # pid, breaks same-second ties deterministically.
+        head_row = max(o_rows, key=lambda r: (r["graded_utc"], r["prediction_id"]))
+        return {"ok": True, "head": head_row["row_hash"]}
     return {"ok": True, "head": prev}
 
 
@@ -333,10 +390,10 @@ def record_outcome(con, *, prediction_id, realized_price, move, move_pct,
     realized_dir = "bullish" if move > 0 else ("bearish" if move < 0 else "flat")
 
     def _do():
-        r = con.execute(
-            "SELECT row_hash FROM outcomes ORDER BY prediction_id DESC LIMIT 1"
-        ).fetchone()
-        prev = r["row_hash"] if r else "GENESIS"
+        # (graded_utc, prediction_id), NOT MAX(prediction_id): a late-graded
+        # prediction inserts mid-sequence, so the newest GRADED row is the
+        # true chain head. See _last_outcome_hash.
+        prev = _last_outcome_hash(con)
         payload = {
             "prediction_id": prediction_id, "graded_utc": utc, "graded_wib": wib,
             "realized_price": realized_price, "move": move, "move_pct": move_pct,

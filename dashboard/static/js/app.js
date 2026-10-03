@@ -43,12 +43,82 @@ async function loadData() {
   try {
     let url = `/api/stats?signal=${currentFilter.signal}`;
     if (currentFilter.days) url += `&days=${currentFilter.days}`;
-    
-    const res = await fetch(url);
+
+    const [res, iRes] = await Promise.all([fetch(url), fetch('/api/improvement')]);
     const data = await res.json();
     renderDashboard(data);
+    if (iRes.ok) renderImprovement(await iRes.json());
   } catch (err) {
     console.error('Failed to load stats:', err);
+  }
+}
+
+function renderImprovement(d) {
+  if (!d) return;
+
+  // Badge + subtitle
+  const badge = document.getElementById('impReadyBadge');
+  badge.textContent = d.ready ? 'READY — GATE CAN FIRE' : 'COLLECTING DATA';
+  badge.className = `text-xs font-bold font-mono px-2.5 py-1 rounded ${d.ready
+    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`;
+  document.getElementById('impSubtitle').textContent =
+    `Next run: ${d.next_run_wib} · Incumbent: ${d.incumbent}`;
+
+  // Progress bars
+  const pct = (h, n) => Math.min(100, (h / Math.max(1, n)) * 100);
+  const barColor = (h, n) => h >= n ? 'bg-emerald-500/80' : 'bg-amber-500/80';
+  const setBar = (txtId, barId, have, need) => {
+    document.getElementById(txtId).textContent = `${have} / ${need}`;
+    const bar = document.getElementById(barId);
+    bar.style.width = `${pct(have, need)}%`;
+    bar.className = `h-full rounded-full ${barColor(have, need)}`;
+  };
+  setBar('impNText', 'impNBar', d.n, d.need_n);
+  setBar('impHeldText', 'impHeldBar', d.held.have, d.held.need);
+  setBar('impTrainText', 'impTrainBar', d.train.have, d.train.need);
+
+  const bindingTxt = {
+    held_out: 'Binding constraint: the held-out reserve. Rows land 70/30, so the 30% reserve fills last — the gate cannot unlock before it reaches 20, no matter how fast the train slice grows.',
+    train: 'Binding constraint: the train slice (70%). The held-out reserve unlocks first, but the search needs 40 trainable rows before it may even try.',
+    both: 'Both slices unlock at the same row count.',
+  };
+  document.getElementById('impBindingNote').innerHTML =
+    (bindingTxt[d.binding] || '') +
+    (d.n < d.need_n ? ` <span class="text-slate-500">Gate unlocks at <strong class="text-slate-300">N = ${d.need_n}</strong> (train unlocks at 58; held-out at 64).</span>` : '');
+
+  // Right column
+  document.getElementById('impNeeded').textContent = d.rows_needed;
+  document.getElementById('impRate').textContent =
+    `${d.accrual.qualifying_per_open_hour.toFixed(3)} / open hour`;
+  document.getElementById('impSince').textContent = d.accrual.measured_since_wib || '—';
+  document.getElementById('impFirst').textContent = d.first_eligible_wib || '—';
+  const chainEl = document.getElementById('impChain');
+  chainEl.textContent = d.chain.ok ? `OK · head ${d.chain.head}` : `TAMPERED`;
+  chainEl.className = d.chain.ok ? 'text-emerald-400' : 'text-rose-400';
+
+  // Why the count is what it is
+  const why = `Every graded, non-noise prediction adds one row: <strong class="text-white">${d.n} so far</strong> (${d.sources.technical} technical + ${d.sources.sentiment} sentiment). Excluded by design: <strong class="text-white">${d.excluded.noise}</strong> noise bars (move &lt; 0.5×ATR) and <strong class="text-white">${d.excluded.no_call}</strong> resolved no-calls — they cannot support a promotion claim. Split: ${d.train.have} train / ${d.held.have} held-out of ${d.need_n} required.`;
+  const backlog = (d.pending_backlog || []);
+  const backlogHtml = backlog.length
+    ? `<div class="mt-2.5 pt-2.5 border-t border-slate-800/60"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-mono font-semibold mb-1">Not yet graded (arrive on the next open-market cycle)</div>` +
+      backlog.map(b => `<div class="text-[11px] font-mono text-amber-400/90">#${b.id} · ${b.direction.toUpperCase()} · ${b.note}</div>`).join('') +
+      `</div>`
+    : '';
+  document.getElementById('impWhyText').innerHTML = why + backlogHtml;
+
+  // Recent attempts
+  const tb = document.getElementById('impRecentBody');
+  if (!d.recent || !d.recent.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="py-2 text-slate-500">No improvement session recorded yet.</td></tr>';
+  } else {
+    tb.innerHTML = d.recent.map(r => `
+      <tr>
+        <td class="py-1.5 pr-3">${r.slot_wib}</td>
+        <td class="py-1.5 pr-3"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">${r.status}</span></td>
+        <td class="py-1.5 pr-3 text-right">${r.train ?? '—'}</td>
+        <td class="py-1.5 text-right">${r.held ?? '—'}</td>
+      </tr>`).join('');
   }
 }
 
