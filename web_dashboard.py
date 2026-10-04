@@ -467,6 +467,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 mime, _ = mimetypes.guess_type(str(file_path))
                 self.send_response(200)
                 self.send_header("Content-Type", mime or "application/octet-stream")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.end_headers()
                 self.wfile.write(file_path.read_bytes())
                 return
