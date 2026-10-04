@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_market as fm          # noqa: E402
 import ledger                      # noqa: E402
 import predictor                   # noqa: E402
+import session_calendar as cal     # noqa: E402
 import stats                       # noqa: E402
 
 UTC = timezone.utc
@@ -209,6 +210,11 @@ def run(now: datetime | None = None, *, payload: dict | None = None,
     slot = now.replace(minute=0, second=0, microsecond=0)
     slot_iso = slot.isoformat(timespec="seconds")
     con = ledger.connect()
+
+    if not cal.is_open(now):
+        # Market closed (weekend or daily break) — no sentiment prediction on frozen prices
+        return {"action": "market_closed", "slot_utc": slot_iso,
+                "reason": f"market closed ({cal.session_state(now)})"}
 
     if not dry_run and not ledger.claim_slot(con, JOB, slot_iso):
         return {"action": "duplicate_slot_rejected", "slot_utc": slot_iso}
