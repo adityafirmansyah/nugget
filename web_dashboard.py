@@ -63,16 +63,22 @@ def get_db():
 def get_stats_data(days: int | None = None, signal_source: str | None = None) -> dict:
     con = get_db()
     where = ["o.prediction_id IS NOT NULL"]
+    where_p = []
     args = []
+    args_p = []
 
     if days is not None:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         where.append("p.created_utc >= ?")
+        where_p.append("p.created_utc >= ?")
         args.append(cutoff)
+        args_p.append(cutoff)
 
     if signal_source and signal_source != "all":
         where.append("p.signal_source = ?")
+        where_p.append("p.signal_source = ?")
         args.append(signal_source)
+        args_p.append(signal_source)
 
     sql = f"""
         SELECT 
@@ -87,15 +93,21 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
     """
     rows = [dict(r) for r in con.execute(sql, args).fetchall()]
 
-    pred_sql = "SELECT COUNT(*) FROM predictions"
-    total_preds = con.execute(pred_sql).fetchone()[0]
-    
-    pending_sql = """
+    pred_where = f"WHERE {' AND '.join(where_p)}" if where_p else ""
+    pred_sql = f"SELECT COUNT(*) FROM predictions p {pred_where}"
+    total_preds = con.execute(pred_sql, args_p).fetchone()[0]
+
+    pending_where_parts = ["o.prediction_id IS NULL"] + where_p
+    pending_sql = f"""
         SELECT COUNT(*) FROM predictions p
         LEFT JOIN outcomes o ON o.prediction_id = p.id
-        WHERE o.prediction_id IS NULL
+        WHERE {' AND '.join(pending_where_parts)}
     """
-    pending_preds = con.execute(pending_sql).fetchone()[0]
+    pending_preds = con.execute(pending_sql, args_p).fetchone()[0]
+
+    # Global signal counts for UI badges
+    count_sql = "SELECT signal_source, COUNT(*) c FROM predictions GROUP BY signal_source"
+    sig_counts = {r["signal_source"]: r["c"] for r in con.execute(count_sql).fetchall()}
 
     graded_non_noise = [r for r in rows if r["is_noise"] == 0 and r["correct"] is not None]
     wins = [r for r in graded_non_noise if r["correct"] == 1]
@@ -127,7 +139,8 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
             "correct": r["correct"]
         })
 
-    recent_sql = """
+    recent_where = f"WHERE {' AND '.join(where_p)}" if where_p else ""
+    recent_sql = f"""
         SELECT 
             p.id, p.created_wib, p.horizon, p.direction, p.confidence, p.ref_price, 
             p.noise_threshold, p.signal_source, p.notes, p.features_json, p.inputs_json,
@@ -135,10 +148,11 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
             o.graded_wib, o.realized_price, o.move, o.is_noise, o.correct, o.base_rate
         FROM predictions p
         LEFT JOIN outcomes o ON o.prediction_id = p.id
+        {recent_where}
         ORDER BY p.id DESC
         LIMIT 50
     """
-    recent_rows = [dict(r) for r in con.execute(recent_sql).fetchall()]
+    recent_rows = [dict(r) for r in con.execute(recent_sql, args_p).fetchall()]
     for r in recent_rows:
         r["contributions"] = _contributions_for_row(r)
 
@@ -161,6 +175,7 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
             "gross_loss_pts": round(gross_loss_pts, 2),
             "verdict": "SIGNIFICANT" if (edge_pp and edge_pp > 3.0 and n_graded > 30) else ("COLLECTING_DATA" if n_graded < 30 else "NOT_SIGNIFICANT")
         },
+        "signal_counts": sig_counts,
         "equity_curve": equity_series,
         "recent_predictions": recent_rows,
         "server_time_wib": datetime.now(WIB).strftime("%Y-%m-%d %H:%M:%S WIB"),
@@ -202,7 +217,7 @@ def get_candles(interval: str = "1h", limit: int = 300) -> dict:
     }
 
 
-def get_markers() -> dict:
+def get_markers(signal_source: str | None = "technical") -> dict:
     """Every graded prediction as a chart marker.
 
     This is the payoff of the self-hosted chart: Nugget's own calls, placed on the
@@ -210,14 +225,23 @@ def get_markers() -> dict:
     inferred from a table.
     """
     con = get_db()
-    rows = con.execute("""
+    where = []
+    args = []
+    if signal_source and signal_source != "all":
+        where.append("p.signal_source = ?")
+        args.append(signal_source)
+
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    sql = f"""
         SELECT p.id, p.created_wib, p.direction, p.ref_price, p.noise_threshold,
                p.signal_source, p.target_bar_utc,
                o.realized_price, o.move, o.is_noise, o.correct, o.graded_wib
         FROM predictions p
         LEFT JOIN outcomes o ON o.prediction_id = p.id
+        {where_clause}
         ORDER BY p.id ASC
-    """).fetchall()
+    """
+    rows = con.execute(sql, args).fetchall()
     con.close()
 
     out = []
@@ -474,7 +498,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         # API: /api/markers
         if path == "/api/markers":
-            self._json(get_markers())
+            sig = query.get("signal", ["technical"])[0]
+            self._json(get_markers(signal_source=sig))
             return
 
         # API: /api/live

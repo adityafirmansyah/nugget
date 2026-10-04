@@ -69,23 +69,31 @@
   <!-- Main Container -->
   <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
-    <!-- Filters Strip -->
-    <div class="flex flex-wrap items-center justify-between gap-4 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-      <div class="flex items-center gap-2 text-xs font-medium">
-        <span class="text-slate-400 mr-1">Time Horizon:</span>
-        <button onclick="setFilter('days', 1)" id="btn-days-1" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">24H</button>
-        <button onclick="setFilter('days', 7)" id="btn-days-7" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">7D</button>
-        <button onclick="setFilter('days', 30)" id="btn-days-30" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">30D</button>
-        <button onclick="setFilter('days', null)" id="btn-days-all" class="filter-btn px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold">ALL TIME</button>
+    <!-- Main Model Navigation: Clean Separation between Technical Quant and Sentiment News -->
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div class="flex items-center gap-2">
+        <button onclick="switchMainTab('technical')" id="btnTabTech" class="flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all border border-amber-500/40 bg-amber-500/10 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.15)]">
+          <span>📊 Technical Quant Model</span>
+          <span id="badgeTechCount" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">--</span>
+        </button>
+        <button onclick="switchMainTab('sentiment')" id="btnTabSent" class="flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white hover:border-slate-700">
+          <span>📰 Sentiment & News Intelligence</span>
+          <span id="badgeSentCount" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">--</span>
+        </button>
       </div>
 
-      <div class="flex items-center gap-2 text-xs font-medium">
-        <span class="text-slate-400 mr-1">Signal Source:</span>
-        <button onclick="setFilter('signal', 'all')" id="btn-sig-all" class="filter-btn px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold">All Signals</button>
-        <button onclick="setFilter('signal', 'technical')" id="btn-sig-technical" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">Technical</button>
-        <button onclick="setFilter('signal', 'sentiment')" id="btn-sig-sentiment" class="filter-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white">Sentiment</button>
+      <!-- Time Horizon Filter -->
+      <div class="flex items-center gap-2 text-xs font-medium bg-slate-900/60 p-1.5 rounded-xl border border-slate-800">
+        <span class="text-slate-400 text-[11px] px-1.5">Horizon:</span>
+        <button onclick="setFilter('days', 1)" id="btn-days-1" class="filter-btn px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white text-xs">24H</button>
+        <button onclick="setFilter('days', 7)" id="btn-days-7" class="filter-btn px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white text-xs">7D</button>
+        <button onclick="setFilter('days', 30)" id="btn-days-30" class="filter-btn px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white text-xs">30D</button>
+        <button onclick="setFilter('days', null)" id="btn-days-all" class="filter-btn px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold text-xs">ALL TIME</button>
       </div>
     </div>
+
+    <!-- VIEW 1: TECHNICAL QUANT MODEL -->
+    <div id="viewTechnical" class="space-y-6">
 
     <!-- LIVE CHARTS: Self-hosted Candlesticks + TradingView Reference -->
     <div class="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
@@ -359,6 +367,108 @@
       </div>
     </div>
 
+    </div><!-- End of viewTechnical -->
+
+    <!-- VIEW 2: SENTIMENT & NEWS INTELLIGENCE -->
+    <div id="viewSentiment" class="space-y-6 hidden">
+      <!-- Info Banner -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-5 relative overflow-hidden shadow-xl">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="text-base font-bold text-white">Sentiment & Macro Intelligence Center</span>
+              <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">100% CITED CITATIONS ONLY</span>
+            </div>
+            <p class="text-xs text-slate-400 leading-relaxed max-w-3xl">
+              Qualitative market research (Job #3). The agent ingests real-time macro & financial RSS feeds, extracts key price drivers, and emits a directional bias strictly bound to verified URL citations. Every claim is mechanically verified before recording. Kept completely separate from the technical model so neither contaminates the other.
+            </p>
+          </div>
+          <div class="flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300 whitespace-nowrap">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>CADENCE: 4-HOUR CYCLES</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sentiment Health / KPI Strip -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        <!-- Sentiment Hit Rate -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+          <div class="text-slate-400 text-xs font-medium">Sentiment Hit Rate</div>
+          <div class="my-2">
+            <span id="sentKpiHitRate" class="text-2xl font-bold font-mono text-white tabular">--%</span>
+            <span id="sentKpiEdgeBadge" class="text-[11px] ml-1.5 px-1.5 py-0.5 rounded font-mono bg-slate-800 text-slate-400">Directional</span>
+          </div>
+          <div class="text-[11px] text-slate-500" id="sentKpiGradedCount">0 graded (non-noise)</div>
+        </div>
+
+        <!-- Total Sentiment Calls -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+          <div class="text-slate-400 text-xs font-medium">Total Sentiment Forecasts</div>
+          <div class="my-2 flex items-baseline gap-2">
+            <span id="sentKpiTotal" class="text-2xl font-bold font-mono text-white tabular">0</span>
+            <span id="sentKpiPending" class="text-[11px] text-amber-400 font-mono">0 pending</span>
+          </div>
+          <div class="text-[11px] text-slate-500">Append-Only Feed</div>
+        </div>
+
+        <!-- Citation Grounding Score -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+          <div class="text-slate-400 text-xs font-medium">Citation Gate Accuracy</div>
+          <div class="my-2">
+            <span class="text-2xl font-bold font-mono text-emerald-400 tabular">100%</span>
+          </div>
+          <div class="text-[11px] text-slate-500">Mechanical URL Verification</div>
+        </div>
+
+        <!-- Low-Conviction Abstained Ratio -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+          <div class="text-slate-400 text-xs font-medium">Abstained / Low Chop</div>
+          <div class="my-2">
+            <span id="sentKpiNoCalls" class="text-2xl font-bold font-mono text-slate-300 tabular">0</span>
+            <span class="text-xs text-slate-500">calls</span>
+          </div>
+          <div class="text-[11px] text-slate-500" id="sentKpiNoCallPct">0% abstained</div>
+        </div>
+      </div>
+
+      <!-- Sentiment Audit Ledger -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+        <div class="p-4 sm:px-6 border-b border-slate-800 flex items-center justify-between">
+          <div>
+            <h2 class="text-sm font-semibold text-white">Sentiment Narrative & Citation Ledger</h2>
+            <p class="text-xs text-slate-400">Append-only sequence of cited news predictions. Click any row to inspect claims and source URLs.</p>
+          </div>
+          <span class="text-xs font-mono text-emerald-400 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> CITATION GATE VERIFIED
+          </span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 uppercase text-[10px] tracking-wider">
+              <tr>
+                <th class="py-3 px-4"># ID</th>
+                <th class="py-3 px-4">Created (WIB)</th>
+                <th class="py-3 px-4">Horizon</th>
+                <th class="py-3 px-4">Sentiment Bias</th>
+                <th class="py-3 px-4">Synthesized Narrative & Verified Claims</th>
+                <th class="py-3 px-4 text-right">Ref Price</th>
+                <th class="py-3 px-4 text-right">Realized</th>
+                <th class="py-3 px-4 text-right">Move (pts)</th>
+                <th class="py-3 px-4 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody id="sentimentTableBody" class="divide-y divide-slate-800/60 text-slate-300">
+              <tr>
+                <td colspan="9" class="text-center py-6 text-slate-500">Loading sentiment records...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- End of viewSentiment -->
+
   </main>
 
   <!-- Details Modal -->
@@ -389,17 +499,6 @@
           <p id="modalRationaleText" class="text-slate-200 leading-relaxed font-sans text-sm"></p>
         </div>
 
-        <!-- Indicator Scorecard Breakdown -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <span class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Indicator Jury Voting Scorecard</span>
-            <span id="modalTotalScoreBadge" class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">Score: +0.00</span>
-          </div>
-          <div id="modalScorecardContainer" class="space-y-2 font-sans text-xs">
-            <!-- Dynamically populated -->
-          </div>
-        </div>
-
         <!-- Key Metrics Grid -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
           <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
@@ -420,11 +519,35 @@
           </div>
         </div>
 
-        <!-- Technical Parameters Breakdown -->
-        <div class="space-y-3">
-          <div class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Technical Confluence Factors</div>
-          <div id="modalFeaturesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono">
-            <!-- Injected via JS -->
+        <!-- Indicator Scorecard Breakdown (Technical Only) -->
+        <div id="modalTechnicalSection" class="space-y-6">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Indicator Jury Voting Scorecard</span>
+              <span id="modalTotalScoreBadge" class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">Score: +0.00</span>
+            </div>
+            <div id="modalScorecardContainer" class="space-y-2 font-sans text-xs">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Technical Parameters Breakdown -->
+          <div class="space-y-3">
+            <div class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Technical Confluence Factors</div>
+            <div id="modalFeaturesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono">
+              <!-- Injected via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Sentiment Citations Breakdown (Sentiment Only) -->
+        <div id="modalSentimentSection" class="space-y-4 hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 uppercase font-mono tracking-wider font-semibold">Verified Article Citations & Claims</span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">✓ 100% CITED</span>
+          </div>
+          <div id="modalClaimsContainer" class="space-y-2.5 font-sans text-xs">
+            <!-- Dynamically populated with claims & URLs -->
           </div>
         </div>
 

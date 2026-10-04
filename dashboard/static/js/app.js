@@ -3,7 +3,8 @@
  * Handles dynamic fetching, KPI updates, Chart.js rendering, and details modal.
  */
 
-let currentFilter = { days: null, signal: 'all' };
+let currentTab = 'technical';
+let currentFilter = { days: null, signal: 'technical' };
 let currentPredictions = [];
 let equityChart = null;
 let distributionChart = null;
@@ -13,6 +14,38 @@ let candleChart = null;
 let candleSeries = null;
 let currentInterval = '1h';
 let activeChartTab = 'candles';
+
+function switchMainTab(tab) {
+  currentTab = tab;
+  currentFilter.signal = tab;
+
+  // Toggle Tab Button Styles
+  const btnTech = document.getElementById('btnTabTech');
+  const btnSent = document.getElementById('btnTabSent');
+  const viewTech = document.getElementById('viewTechnical');
+  const viewSent = document.getElementById('viewSentiment');
+
+  if (tab === 'technical') {
+    btnTech.className = "flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all border border-amber-500/40 bg-amber-500/10 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.15)]";
+    btnSent.className = "flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white hover:border-slate-700";
+    viewTech.classList.remove('hidden');
+    viewSent.classList.add('hidden');
+    // Resize candle chart if needed
+    if (candleChart) {
+      setTimeout(() => {
+        const container = document.getElementById('candleChartContainer');
+        if (container) candleChart.applyOptions({ width: container.clientWidth });
+      }, 50);
+    }
+  } else {
+    btnSent.className = "flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all border border-amber-500/40 bg-amber-500/10 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.15)]";
+    btnTech.className = "flex items-center gap-2.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white hover:border-slate-700";
+    viewTech.classList.add('hidden');
+    viewSent.classList.remove('hidden');
+  }
+
+  loadData();
+}
 
 function setFilter(type, value) {
   if (type === 'days') currentFilter.days = value;
@@ -28,12 +61,6 @@ function setFilter(type, value) {
   if (dayBtn) {
     dayBtn.classList.add('border-amber-500/40', 'bg-amber-500/10', 'text-amber-400', 'font-semibold');
     dayBtn.classList.remove('border-slate-700', 'bg-slate-800', 'text-slate-300');
-  }
-
-  const sigBtn = document.getElementById(`btn-sig-${currentFilter.signal}`);
-  if (sigBtn) {
-    sigBtn.classList.add('border-amber-500/40', 'bg-amber-500/10', 'text-amber-400', 'font-semibold');
-    sigBtn.classList.remove('border-slate-700', 'bg-slate-800', 'text-slate-300');
   }
 
   loadData();
@@ -127,7 +154,53 @@ function renderDashboard(data) {
   const k = data.kpis;
   
   document.getElementById('serverTime').textContent = data.server_time_wib;
+
+  // Update badge counts on top tab buttons
+  if (data.signal_counts) {
+    const techBadge = document.getElementById('badgeTechCount');
+    const sentBadge = document.getElementById('badgeSentCount');
+    if (techBadge) techBadge.textContent = data.signal_counts.technical || 0;
+    if (sentBadge) sentBadge.textContent = data.signal_counts.sentiment || 0;
+  }
+
+  if (currentTab === 'sentiment') {
+    renderSentimentView(data);
+  } else {
+    renderTechnicalView(data);
+  }
+}
+
+function renderSentimentView(data) {
+  const k = data.kpis;
   
+  // Sentiment KPIs
+  const hitEl = document.getElementById('sentKpiHitRate');
+  if (hitEl) hitEl.textContent = k.hit_rate !== null ? `${k.hit_rate}%` : '--%';
+  
+  const gradedEl = document.getElementById('sentKpiGradedCount');
+  if (gradedEl) gradedEl.textContent = `${k.graded_non_noise} graded (decided calls)`;
+
+  const totalEl = document.getElementById('sentKpiTotal');
+  if (totalEl) totalEl.textContent = k.total_predictions;
+
+  const pendEl = document.getElementById('sentKpiPending');
+  if (pendEl) pendEl.textContent = `${k.pending_predictions} pending`;
+
+  const nocallEl = document.getElementById('sentKpiNoCalls');
+  if (nocallEl) nocallEl.textContent = k.no_calls;
+
+  const nocallPctEl = document.getElementById('sentKpiNoCallPct');
+  if (nocallPctEl) {
+    const pct = Math.round((k.no_calls / (k.total_predictions || 1)) * 100);
+    nocallPctEl.textContent = `${pct}% low-conviction chop`;
+  }
+
+  renderSentimentTable(data.recent_predictions);
+}
+
+function renderTechnicalView(data) {
+  const k = data.kpis;
+
   // KPIs
   document.getElementById('kpiHitRate').textContent = k.hit_rate !== null ? `${k.hit_rate}%` : '--%';
   document.getElementById('kpiEdgeBadge').textContent = k.edge_pp !== null ? `${k.edge_pp > 0 ? '+' : ''}${k.edge_pp}pp edge` : `vs ${k.base_rate}%`;
@@ -316,6 +389,70 @@ function renderTable(predictions) {
   }).join('');
 }
 
+function renderSentimentTable(predictions) {
+  const tbody = document.getElementById('sentimentTableBody');
+  if (!tbody) return;
+  if (!predictions || !predictions.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center py-6 text-slate-500">No sentiment records found in this window</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = predictions.map(p => {
+    const isBull = p.direction === 'bullish';
+    const isBear = p.direction === 'bearish';
+    const dirBadge = isBull 
+      ? '<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">BULLISH</span>'
+      : (isBear 
+        ? '<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-semibold">BEARISH</span>'
+        : '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-semibold">ABSTAINED</span>');
+
+    let statusBadge = '<span class="text-slate-500 font-mono">Pending...</span>';
+    if (p.graded_wib) {
+      if (p.is_noise) {
+        statusBadge = '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">NOISE</span>';
+      } else if (p.correct === 1) {
+        statusBadge = '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">WIN</span>';
+      } else if (p.correct === 0) {
+        statusBadge = '<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold border border-rose-500/30">LOSS</span>';
+      } else {
+        statusBadge = '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">NO-CALL</span>';
+      }
+    }
+
+    const moveText = p.move !== null ? `${p.move > 0 ? '+' : ''}${p.move.toFixed(2)}` : '—';
+    const moveColor = p.move > 0 ? 'text-emerald-400' : (p.move < 0 ? 'text-rose-400' : 'text-slate-400');
+    
+    let inputs = {};
+    try { inputs = JSON.parse(p.inputs_json || '{}'); } catch(e){}
+    const claimCount = (inputs.claims || []).length;
+    const claimBadge = claimCount > 0
+      ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">${claimCount} Cited Sources</span>`
+      : `<span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">Macro Narrative</span>`;
+
+    let summary = p.notes || "Grounded news sentiment extraction";
+
+    return `
+      <tr class="hover:bg-slate-800/40 transition-colors cursor-pointer group" onclick="openDetailsModal(${p.id})">
+        <td class="py-3 px-4 font-mono font-medium text-slate-400 group-hover:text-amber-400">#${p.id}</td>
+        <td class="py-3 px-4 text-slate-300 whitespace-nowrap">${p.created_wib.slice(5, 16)}</td>
+        <td class="py-3 px-4 font-mono text-slate-400">${p.horizon}</td>
+        <td class="py-3 px-4">${dirBadge}</td>
+        <td class="py-3 px-4">
+          <div class="flex items-center gap-2 text-slate-300 group-hover:text-amber-300">
+            <span class="truncate max-w-md">${summary}</span>
+            ${claimBadge}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60 font-mono whitespace-nowrap">View Citations &rarr;</span>
+          </div>
+        </td>
+        <td class="py-3 px-4 text-right font-mono tabular">${p.ref_price.toFixed(2)}</td>
+        <td class="py-3 px-4 text-right font-mono tabular text-white">${p.realized_price ? p.realized_price.toFixed(2) : '—'}</td>
+        <td class="py-3 px-4 text-right font-mono tabular font-medium ${moveColor}">${moveText}</td>
+        <td class="py-3 px-4 text-center">${statusBadge}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
 function openDetailsModal(id) {
   const p = currentPredictions.find(item => item.id === id);
   if (!p) return;
@@ -337,113 +474,171 @@ function openDetailsModal(id) {
 
   document.getElementById('modalTitle').textContent = `Prediction #${p.id} — ${p.direction.toUpperCase()}`;
   document.getElementById('modalHorizonBadge').textContent = p.horizon.toUpperCase();
-  document.getElementById('modalTimestamp').textContent = `${p.created_wib} (${p.signal_source})`;
+  document.getElementById('modalTimestamp').textContent = `${p.created_wib} (${p.signal_source.toUpperCase()})`;
 
-  // Contributions: computed server-side from features_json+params_json for
-  // every technical prediction (predictor.score() is pure), so this works
-  // for rows whose `notes` holds prose instead of contrib=... JSON.
-  // Sentiment-sourced predictions genuinely have no indicator jury - an
-  // empty object here is correct for them, not a bug.
-  const contribs = p.contributions || {};
+  const isSent = p.signal_source === 'sentiment';
+  const techSec = document.getElementById('modalTechnicalSection');
+  const sentSec = document.getElementById('modalSentimentSection');
 
-  // Populate Easy-to-understand Scorecard
-  const scoreContainer = document.getElementById('modalScorecardContainer');
-  const scoreBadge = document.getElementById('modalTotalScoreBadge');
-  
-  const scoreVal = p.confidence !== undefined ? p.confidence : 0;
-  const signedScore = (p.direction === 'bearish' ? -scoreVal : scoreVal).toFixed(3);
-  scoreBadge.textContent = `Total Score: ${signedScore > 0 ? '+' : ''}${signedScore} (Bar: ±0.18)`;
-  scoreBadge.className = `text-xs font-mono px-2 py-0.5 rounded font-bold ${signedScore >= 0.18 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : (signedScore <= -0.18 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-300')}`;
+  if (isSent) {
+    if (techSec) techSec.classList.add('hidden');
+    if (sentSec) sentSec.classList.remove('hidden');
 
-  const indicatorMeta = {
-    position: {
-      title: "Price Position (vs 20-hour Average)",
-      desc: "Are buyers paying more or less than the average price over the last 20 hours?",
-      explain: (v) => v > 0.05 ? "Price trading well above recent moving average (strong buyer dominance)." : (v < -0.05 ? "Price pinned below recent moving average (seller dominance)." : "Price hovering right near the 20-hour average.")
-    },
-    rsi: {
-      title: "RSI Momentum (Buying Speedometer)",
-      desc: "How fast is price climbing or falling on a scale of 0 to 100?",
-      explain: (v) => v > 0.05 ? "Speedometer shows strong upward buying momentum (> 50)." : (v < -0.05 ? "Speedometer shows downward selling momentum (< 50)." : "Momentum is balanced near the 50 neutral mark.")
-    },
-    trend: {
-      title: "Moving Average Trend (Fast vs Slow)",
-      desc: "Is the short-term 12h average moving faster than the medium-term 26h average?",
-      explain: (v) => v > 0.02 ? "Fast 12-EMA sits above 26-EMA; the overall elevator is moving up." : (v < -0.02 ? "Fast 12-EMA sits under 26-EMA; the overall elevator is moving down." : "Fast and slow moving averages are flat/intertwined.")
-    },
-    momentum: {
-      title: "24-Hour Velocity",
-      desc: "Where is the price right now compared to exactly 24 hours ago?",
-      explain: (v) => v > 0.02 ? "Positive gain over the past full day (healthy continuation)." : (v < -0.02 ? "Price is lower than 24 hours ago (acting as overhead drag/resistance)." : "Flat compared to yesterday.")
-    },
-    volume_confirm: {
-      title: "Volume Confirmation",
-      desc: "Are large volume traders actively backing up this move?",
-      explain: (v) => v > 0.02 ? "High volume confirms and supports the directional move." : (v < -0.02 ? "Lower than average volume (move lacks strong institutional fuel)." : "Average trading volume.")
-    },
-    breadth: {
-      title: "Range Breakout (6-Hour High/Low)",
-      desc: "Did the current bar break out of the 6-hour range?",
-      explain: (v) => v > 0 ? "Broke out to make a fresh 6-hour higher-high." : (v < 0 ? "Broke down to make a fresh 6-hour lower-low." : "Trading inside recent 6-hour boundaries (no breakout).")
-    }
-  };
+    let inputs = {};
+    try { inputs = JSON.parse(p.inputs_json || '{}'); } catch(e){}
+    const claims = inputs.claims || [];
+    const claimsContainer = document.getElementById('modalClaimsContainer');
 
-  if (Object.keys(contribs).length > 0) {
-    scoreContainer.innerHTML = Object.entries(contribs).map(([key, val]) => {
-      const meta = indicatorMeta[key] || { title: key, desc: "", explain: () => "" };
-      const isPos = val > 0.01;
-      const isNeg = val < -0.01;
-      
-      const badgeClass = isPos ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : (isNeg ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-slate-800 text-slate-400 border border-slate-700/50');
-      const voteText = isPos ? `+${val.toFixed(3)} Bullish` : (isNeg ? `${val.toFixed(3)} Bearish` : `0.000 Neutral`);
+    document.getElementById('modalRationaleText').textContent = p.notes || "Qualitative sentiment synthesis from market news feeds.";
 
-      return `
-        <div class="bg-slate-950/40 p-3 rounded-xl border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div class="space-y-1">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-slate-200 text-xs">${meta.title}</span>
-              <div class="group/tip relative inline-flex items-center">
-                <span class="w-4 h-4 rounded-full bg-slate-800 text-slate-400 group-hover/tip:bg-slate-700 group-hover/tip:text-amber-300 flex items-center justify-center text-[10px] font-mono cursor-help transition-colors border border-slate-700/60 font-bold">?</span>
-                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-56 p-2 bg-slate-900 border border-slate-700 text-slate-200 text-[11px] rounded-lg shadow-xl z-30 font-sans normal-case leading-normal pointer-events-none">
-                  ${meta.desc}
-                  <div class="w-2 h-2 bg-slate-900 border-r border-b border-slate-700 transform rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2"></div>
-                </div>
-              </div>
-              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${badgeClass}">${voteText}</span>
+    if (claims.length > 0) {
+      claimsContainer.innerHTML = claims.map((c, i) => {
+        let domain = "";
+        try { domain = new URL(c.source_url).hostname.replace('www.', ''); } catch(e){}
+        return `
+          <div class="bg-slate-950/40 p-3 rounded-xl border border-slate-800 space-y-2">
+            <div class="text-slate-200 text-xs font-sans leading-relaxed">
+              &ldquo;${c.text}&rdquo;
             </div>
-            <div class="text-[11px] text-slate-300 font-sans italic">${meta.explain(val)}</div>
+            <div class="flex items-center justify-between text-[11px] font-mono pt-1.5 border-t border-slate-900">
+              <span class="text-slate-400 font-semibold text-[10px] uppercase tracking-wider">${domain || 'Verified Feed'}</span>
+              <a href="${c.source_url}" target="_blank" rel="noopener noreferrer" class="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 font-sans">
+                <span>View Source Article</span>
+                <span class="text-[10px]">&rarr;</span>
+              </a>
+            </div>
           </div>
-        </div>
-      `;
-    }).join('');
-
-    // Generate comprehensive summary purely from row data
-    const posDrivers = Object.entries(contribs).filter(([k, v]) => v > 0.02).map(([k, v]) => indicatorMeta[k]?.title.split(' ')[0] || k);
-    const negDrivers = Object.entries(contribs).filter(([k, v]) => v < -0.02).map(([k, v]) => indicatorMeta[k]?.title.split(' ')[0] || k);
-    
-    let driverSentence = "";
-    if (p.direction === 'bullish') {
-      if (posDrivers.length) driverSentence += `Upward momentum was driven primarily by <strong>${posDrivers.join(', ')}</strong>. `;
-      if (negDrivers.length) driverSentence += `Counter-acting drag was noted from <strong>${negDrivers.join(', ')}</strong>. `;
-    } else if (p.direction === 'bearish') {
-      if (negDrivers.length) driverSentence += `Downward pressure was driven primarily by <strong>${negDrivers.join(', ')}</strong>. `;
-      if (posDrivers.length) driverSentence += `Counter-acting support was noted from <strong>${posDrivers.join(', ')}</strong>. `;
+        `;
+      }).join('');
     } else {
-      driverSentence = "Neither buyers nor sellers showed sufficient conviction to clear the directional hurdle. ";
+      claimsContainer.innerHTML = `<div class="text-slate-500 py-3 text-center">No individual claim citations stored for this prediction.</div>`;
+    }
+  } else {
+    if (techSec) techSec.classList.remove('hidden');
+    if (sentSec) sentSec.classList.add('hidden');
+
+    // Contributions: computed server-side from features_json+params_json for
+    // every technical prediction (predictor.score() is pure)
+    const contribs = p.contributions || {};
+
+    // Populate Easy-to-understand Scorecard
+    const scoreContainer = document.getElementById('modalScorecardContainer');
+    const scoreBadge = document.getElementById('modalTotalScoreBadge');
+    
+    const scoreVal = p.confidence !== undefined ? p.confidence : 0;
+    const signedScore = (p.direction === 'bearish' ? -scoreVal : scoreVal).toFixed(3);
+    scoreBadge.textContent = `Total Score: ${signedScore > 0 ? '+' : ''}${signedScore} (Bar: ±0.18)`;
+    scoreBadge.className = `text-xs font-mono px-2 py-0.5 rounded font-bold ${signedScore >= 0.18 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : (signedScore <= -0.18 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-300')}`;
+
+    const indicatorMeta = {
+      position: {
+        title: "Price Position (vs 20-hour Average)",
+        desc: "Are buyers paying more or less than the average price over the last 20 hours?",
+        explain: (v) => v > 0.05 ? "Price trading well above recent moving average (strong buyer dominance)." : (v < -0.05 ? "Price pinned below recent moving average (seller dominance)." : "Price hovering right near the 20-hour average.")
+      },
+      rsi: {
+        title: "RSI Momentum (Buying Speedometer)",
+        desc: "How fast is price climbing or falling on a scale of 0 to 100?",
+        explain: (v) => v > 0.05 ? "Speedometer shows strong upward buying momentum (> 50)." : (v < -0.05 ? "Speedometer shows downward selling momentum (< 50)." : "Momentum is balanced near the 50 neutral mark.")
+      },
+      trend: {
+        title: "Moving Average Trend (Fast vs Slow)",
+        desc: "Is the short-term 12h average moving faster than the medium-term 26h average?",
+        explain: (v) => v > 0.02 ? "Fast 12-EMA sits above 26-EMA; the overall elevator is moving up." : (v < -0.02 ? "Fast 12-EMA sits under 26-EMA; the overall elevator is moving down." : "Fast and slow moving averages are flat/intertwined.")
+      },
+      momentum: {
+        title: "24-Hour Velocity",
+        desc: "Where is the price right now compared to exactly 24 hours ago?",
+        explain: (v) => v > 0.02 ? "Positive gain over the past full day (healthy continuation)." : (v < -0.02 ? "Price is lower than 24 hours ago (acting as overhead drag/resistance)." : "Flat compared to yesterday.")
+      },
+      volume_confirm: {
+        title: "Volume Confirmation",
+        desc: "Are large volume traders actively backing up this move?",
+        explain: (v) => v > 0.02 ? "High volume confirms and supports the directional move." : (v < -0.02 ? "Lower than average volume (move lacks strong institutional fuel)." : "Average trading volume.")
+      },
+      breadth: {
+        title: "Range Breakout (6-Hour High/Low)",
+        desc: "Did the current bar break out of the 6-hour range?",
+        explain: (v) => v > 0 ? "Broke out to make a fresh 6-hour higher-high." : (v < 0 ? "Broke down to make a fresh 6-hour lower-low." : "Trading inside recent 6-hour boundaries (no breakout).")
+      }
+    };
+
+    if (Object.keys(contribs).length > 0) {
+      scoreContainer.innerHTML = Object.entries(contribs).map(([key, val]) => {
+        const meta = indicatorMeta[key] || { title: key, desc: "", explain: () => "" };
+        const isPos = val > 0.01;
+        const isNeg = val < -0.01;
+        
+        const badgeClass = isPos ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : (isNeg ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-slate-800 text-slate-400 border border-slate-700/50');
+        const voteText = isPos ? `+${val.toFixed(3)} Bullish` : (isNeg ? `${val.toFixed(3)} Bearish` : `0.000 Neutral`);
+
+        return `
+          <div class="bg-slate-950/40 p-3 rounded-xl border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold text-slate-200 text-xs">${meta.title}</span>
+                <div class="group/tip relative inline-flex items-center">
+                  <span class="w-4 h-4 rounded-full bg-slate-800 text-slate-400 group-hover/tip:bg-slate-700 group-hover/tip:text-amber-300 flex items-center justify-center text-[10px] font-mono cursor-help transition-colors border border-slate-700/60 font-bold">?</span>
+                  <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tip:block w-56 p-2 bg-slate-900 border border-slate-700 text-slate-200 text-[11px] rounded-lg shadow-xl z-30 font-sans normal-case leading-normal pointer-events-none">
+                    ${meta.desc}
+                    <div class="w-2 h-2 bg-slate-900 border-r border-b border-slate-700 transform rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2"></div>
+                  </div>
+                </div>
+                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${badgeClass}">${voteText}</span>
+              </div>
+              <div class="text-[11px] text-slate-300 font-sans italic">${meta.explain(val)}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Generate comprehensive summary purely from row data
+      const posDrivers = Object.entries(contribs).filter(([k, v]) => v > 0.02).map(([k, v]) => indicatorMeta[k]?.title.split(' ')[0] || k);
+      const negDrivers = Object.entries(contribs).filter(([k, v]) => v < -0.02).map(([k, v]) => indicatorMeta[k]?.title.split(' ')[0] || k);
+      
+      let driverSentence = "";
+      if (p.direction === 'bullish') {
+        if (posDrivers.length) driverSentence += `Upward momentum was driven primarily by <strong>${posDrivers.join(', ')}</strong>. `;
+        if (negDrivers.length) driverSentence += `Counter-acting drag was noted from <strong>${negDrivers.join(', ')}</strong>. `;
+      } else if (p.direction === 'bearish') {
+        if (negDrivers.length) driverSentence += `Downward pressure was driven primarily by <strong>${negDrivers.join(', ')}</strong>. `;
+        if (posDrivers.length) driverSentence += `Counter-acting support was noted from <strong>${posDrivers.join(', ')}</strong>. `;
+      } else {
+        driverSentence = "Neither buyers nor sellers showed sufficient conviction to clear the directional hurdle. ";
+      }
+
+      const actionText = p.direction === 'no_call' 
+        ? `Because the score fell inside the <strong>±0.18</strong> neutral zone, she wisely abstained to avoid flat market chop.`
+        : `Because the final score cleared the <strong>±0.18</strong> threshold, she committed to the call with an ATR volatility cushion of <strong>$${p.noise_threshold ? p.noise_threshold.toFixed(2) : 0}</strong>.`;
+
+      let summaryHtml = `Nugget reached a <strong>${p.direction.toUpperCase()}</strong> call with a conviction score of <strong>${signedScore}</strong>. ${driverSentence}${actionText}`;
+
+      document.getElementById('modalRationaleText').innerHTML = summaryHtml;
+    } else {
+      scoreContainer.innerHTML = `<div class="text-slate-500 py-3 text-center">No indicator contributions available for this prediction.</div>`;
+      document.getElementById('modalRationaleText').textContent = p.notes || "Technical indicators confluence score calculated prior to bar formation.";
     }
 
-    const actionText = p.direction === 'no_call' 
-      ? `Because the score fell inside the <strong>±0.18</strong> neutral zone, she wisely abstained to avoid flat market chop.`
-      : `Because the final score cleared the <strong>±0.18</strong> threshold, she committed to the call with an ATR volatility cushion of <strong>$${p.noise_threshold ? p.noise_threshold.toFixed(2) : 0}</strong>.`;
+    // Populate technical features
+    const featuresGrid = document.getElementById('modalFeaturesGrid');
+    let feats = {};
+    try { feats = JSON.parse(p.features_json || '{}'); } catch(e){}
 
-    let summaryHtml = `Nugget reached a <strong>${p.direction.toUpperCase()}</strong> call with a conviction score of <strong>${signedScore}</strong>. ${driverSentence}${actionText}`;
+    const featureItems = [
+      { label: 'RSI (14)', val: feats.rsi14 ? feats.rsi14.toFixed(1) : '—', color: feats.rsi14 > 55 ? 'text-emerald-400' : (feats.rsi14 < 45 ? 'text-rose-400' : 'text-slate-300') },
+      { label: '20-SMA', val: feats.sma20 ? `$${feats.sma20.toFixed(1)}` : '—', color: 'text-slate-300' },
+      { label: 'Fast EMA (12)', val: feats.ema12 ? `$${feats.ema12.toFixed(1)}` : '—', color: 'text-slate-300' },
+      { label: 'Slow EMA (26)', val: feats.ema26 ? `$${feats.ema26.toFixed(1)}` : '—', color: 'text-slate-300' },
+      { label: 'Volatility (ATR14)', val: feats.atr14 ? `$${feats.atr14.toFixed(2)}` : '—', color: 'text-amber-400' },
+      { label: 'Volume vs Avg', val: feats.vol_vs_avg ? `${feats.vol_vs_avg.toFixed(2)}x` : '—', color: 'text-slate-300' }
+    ];
 
-    document.getElementById('modalRationaleText').innerHTML = summaryHtml;
-  } else {
-    scoreContainer.innerHTML = p.signal_source === 'sentiment'
-      ? `<div class="text-slate-500 py-3 text-center">This call came from the sentiment/news job, not the technical indicator jury - no per-indicator scorecard applies.</div>`
-      : `<div class="text-slate-500 py-3 text-center">No indicator contributions available for this prediction.</div>`;
-    document.getElementById('modalRationaleText').textContent = p.notes || "Technical indicators confluence score calculated prior to bar formation.";
+    featuresGrid.innerHTML = featureItems.map(f => `
+      <div class="bg-slate-950/40 p-2.5 rounded-lg border border-slate-800">
+        <div class="text-[10px] text-slate-500 uppercase">${f.label}</div>
+        <div class="font-bold text-xs mt-0.5 ${f.color}">${f.val}</div>
+      </div>
+    `).join('');
   }
   document.getElementById('modalRefPrice').textContent = `$${p.ref_price.toFixed(2)}`;
   document.getElementById('modalNoiseThr').textContent = p.noise_threshold ? `$${p.noise_threshold.toFixed(2)}` : '—';
@@ -667,7 +862,7 @@ async function loadCandlesAndMarkers() {
   try {
     const [cRes, mRes] = await Promise.all([
       fetch(`/api/candles?interval=${currentInterval}&limit=300`),
-      fetch('/api/markers')
+      fetch('/api/markers?signal=technical')
     ]);
 
     const cData = await cRes.json();
