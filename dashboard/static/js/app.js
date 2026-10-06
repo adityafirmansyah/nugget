@@ -9,11 +9,25 @@ let currentPredictions = [];
 let equityChart = null;
 let distributionChart = null;
 
-// Lightweight Charts State
+// KLineChart instance
 let candleChart = null;
-let candleSeries = null;
 let currentInterval = '1h';
 let activeChartTab = 'candles';
+let candleRefreshTimer = null; // owned by subscribeBar/unsubscribeBar, never resetData()
+
+// Technical indicator overlay state (custom indicators registered once)
+let activeIndicators = { ema12: true, ema26: true, sma20: false, atr_band: false, rsi14: false };
+let indicatorIds = {}; // key -> created indicator id, so re-toggling removes the right one
+let drawnOverlayIds = []; // user-drawn trendline/fib/channel overlay ids, for Clear
+
+// Prediction marker visibility: ongoing (pending) predictions are the
+// useful live-read - resolved outcomes (win/loss/noise/no_call_resolved)
+// are historical audit trail, not something you need staring at you on
+// every load. Only "pending" on by default; everything else one click away.
+// no_call_pending (abstained, not yet graded) rides the same "No-Call"
+// toggle as no_call_resolved - both are "Nugget declined to call", just at
+// different points in the grading lifecycle, and neither is a live bet.
+let activeMarkerKinds = { win: false, loss: false, pending: true, noise: false, no_call_resolved: false, no_call_pending: false };
 
 function switchMainTab(tab) {
   currentTab = tab;
@@ -34,7 +48,7 @@ function switchMainTab(tab) {
     if (candleChart) {
       setTimeout(() => {
         const container = document.getElementById('candleChartContainer');
-        if (container) candleChart.applyOptions({ width: container.clientWidth });
+        if (container) candleChart.resize();
       }, 50);
     }
   } else {
@@ -346,7 +360,17 @@ function renderTable(predictions) {
         statusBadge = '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">WIN</span>';
       } else if (p.correct === 0) {
         statusBadge = '<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold border border-rose-500/30">LOSS</span>';
+      } else {
+        // Graded, not noise, correct still NULL: a resolved no_call -
+        // Nugget abstained and the bar closed. Distinct from "Pending..."
+        // (which means the target bar hasn't been reached yet at all).
+        statusBadge = '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">NO-CALL</span>';
       }
+    } else if (p.direction === 'no_call') {
+      // Ungraded abstention - never had a side to win/lose, so it is NOT
+      // an "open bet waiting to resolve" the way a real bullish/bearish
+      // pending call is. Same distinction as the chart markers/KPI badge.
+      statusBadge = '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">NO-CALL</span>';
     }
 
     const moveText = p.move !== null ? `${p.move > 0 ? '+' : ''}${p.move.toFixed(2)}` : '—';
@@ -417,6 +441,8 @@ function renderSentimentTable(predictions) {
       } else {
         statusBadge = '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">NO-CALL</span>';
       }
+    } else if (p.direction === 'no_call') {
+      statusBadge = '<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">NO-CALL</span>';
     }
 
     const moveText = p.move !== null ? `${p.move > 0 ? '+' : ''}${p.move.toFixed(2)}` : '—';
@@ -722,7 +748,8 @@ setInterval(loadData, 30000);
 initCandleChart();
 loadLivePrice();
 setInterval(loadLivePrice, 15000); // 15s spot ticker refresh
-setInterval(refreshCandlesOnly, 30000); // 30s candle refresh
+// Candle refresh now lives inside initCandleChart's subscribeBar handler -
+// NOT a resetData() poll, which used to wipe every drawn overlay within 30s.
 
 function setChartTab(tab) {
   activeChartTab = tab;
@@ -743,8 +770,7 @@ function setChartTab(tab) {
 
     if (candleChart) {
       setTimeout(() => {
-        const container = document.getElementById('candleChartContainer');
-        candleChart.applyOptions({ width: container.clientWidth });
+        candleChart.resize();
       }, 50);
     }
   } else {
@@ -774,9 +800,8 @@ function setCandleInterval(tf) {
       }
     }
   });
-  loadCandlesAndMarkers();
+  if (candleChart) candleChart.setPeriod(periodForInterval(tf));
 }
-
 async function loadLivePrice() {
   try {
     const res = await fetch('/api/live');
@@ -789,149 +814,513 @@ async function loadLivePrice() {
   } catch(e){}
 }
 
+function periodForInterval(iv) {
+  const map = {
+    '15m': { span: 15, type: 'minute' },
+    '1h': { span: 1, type: 'hour' },
+    '4h': { span: 4, type: 'hour' },
+    '1d': { span: 1, type: 'day' },
+  };
+  return map[iv] || map['1h'];
+}
+
 function initCandleChart() {
   const container = document.getElementById('candleChartContainer');
-  if (!container || !window.LightweightCharts) return;
+  if (!container || !window.klinecharts) return;
 
-  candleChart = LightweightCharts.createChart(container, {
-    width: container.clientWidth,
-    height: 384, // 96 tailwind height
-    layout: {
-      background: { color: 'transparent' },
-      textColor: '#94a3b8',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-    },
+  candleChart = klinecharts.init(container, {
+    styles: 'dark',
+    layout: [
+      { type: 'candle', content: [], options: { order: 10 } },
+    ],
+  });
+  candleChart.setStyles({
     grid: {
-      vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
-      horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+      horizontal: { color: 'rgba(255,255,255,0.04)' },
+      vertical: { color: 'rgba(255,255,255,0.03)' },
+    },
+    candle: {
+      bar: {
+        upColor: '#10b981', downColor: '#f43f5e', noChangeColor: '#94a3b8',
+        upBorderColor: '#10b981', downBorderColor: '#f43f5e',
+        upWickColor: '#10b981', downWickColor: '#f43f5e',
+      },
+      tooltip: { showRule: 'always', showType: 'standard' },
     },
     crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: '#f59e0b', width: 1, style: 3 },
-      horzLine: { color: '#f59e0b', width: 1, style: 3 },
+      horizontal: { line: { color: '#f59e0b' } },
+      vertical: { line: { color: '#f59e0b' } },
     },
-    timeScale: {
-      borderColor: 'rgba(255, 255, 255, 0.08)',
-      timeVisible: true,
-      secondsVisible: false,
-    },
-    rightPriceScale: {
-      borderColor: 'rgba(255, 255, 255, 0.08)',
-      scaleMargins: { top: 0.1, bottom: 0.15 },
-    }
+    xAxis: { axisLine: { color: 'rgba(255,255,255,0.08)' } },
+    yAxis: { axisLine: { color: 'rgba(255,255,255,0.08)' } },
   });
 
-  candleSeries = candleChart.addCandlestickSeries({
-    upColor: '#10b981',
-    downColor: '#f43f5e',
-    borderVisible: false,
-    wickUpColor: '#10b981',
-    wickDownColor: '#f43f5e',
-  });
+  registerNuggetIndicators();
 
-  // Crosshair legend update
-  candleChart.subscribeCrosshairMove(param => {
-    const legendEl = document.getElementById('legendValues');
-    if (!param.time || !param.seriesData || !param.seriesData.get(candleSeries)) {
-      return;
-    }
-    const data = param.seriesData.get(candleSeries);
-    legendEl.innerHTML = `O: <strong class="text-white">${data.open.toFixed(2)}</strong> H: <strong class="text-white">${data.high.toFixed(2)}</strong> L: <strong class="text-white">${data.low.toFixed(2)}</strong> C: <strong class="${data.close >= data.open ? 'text-emerald-400' : 'text-rose-400'}">${data.close.toFixed(2)}</strong>`;
-  });
-
-  // Responsive window resize
   window.addEventListener('resize', () => {
-    if (candleChart && container) {
-      candleChart.applyOptions({ width: container.clientWidth });
-    }
+    if (candleChart) candleChart.resize();
   });
 
-  loadCandlesAndMarkers();
+  // KLineChart's data pipeline is PULL-based: getBars only fires after
+  // setSymbol + setPeriod + setDataLoader have all been called at least
+  // once. subscribeBar is the intended path for ongoing live updates -
+  // unlike resetData()/setPeriod() (which fully re-initialize the chart
+  // and silently wipe every drawn overlay, trendline/fib/channel included,
+  // the actual bug: a trendline survived less than 30s before vanishing),
+  // subscribeBar PUSHES a single merged bar and leaves panes/overlays
+  // alone. The periodic poll lives inside subscribeBar below; there is no
+  // separate setInterval(resetData) anywhere anymore.
+  candleChart.setDataLoader({
+    getBars: ({ callback }) => { fetchAndApplyBars(callback); },
+    subscribeBar: ({ callback }) => {
+      candleRefreshTimer = setInterval(() => {
+        if (activeChartTab === 'candles') fetchAndApplyBars(null, callback);
+      }, 30000);
+    },
+    unsubscribeBar: () => {
+      if (candleRefreshTimer) { clearInterval(candleRefreshTimer); candleRefreshTimer = null; }
+    },
+  });
+  candleChart.setSymbol({ ticker: 'XAUUSD-PAXG' });
+  candleChart.setPeriod(periodForInterval(currentInterval));
 }
 
-async function refreshCandlesOnly() {
-  if (activeChartTab === 'candles') {
-    loadCandlesAndMarkers();
-  }
-}
-
-async function loadCandlesAndMarkers() {
-  if (!candleSeries) return;
-
+async function fetchAndApplyBars(initCallback, pushCallback) {
   try {
-    const [cRes, mRes] = await Promise.all([
+    const [cRes, mRes, iRes] = await Promise.all([
       fetch(`/api/candles?interval=${currentInterval}&limit=300`),
-      fetch('/api/markers?signal=technical')
+      fetch('/api/markers?signal=technical'),
+      fetch(`/api/indicators?interval=${currentInterval}&limit=300`),
     ]);
-
     const cData = await cRes.json();
     const mData = await mRes.json();
+    const iData = await iRes.json();
+
+    if (iData.ok) window.__nuggetIndData = iData; // consumed by calc() closures
+    window.__nuggetMarkerData = mData;
 
     if (cData.ok && cData.bars && cData.bars.length) {
-      candleSeries.setData(cData.bars);
-      
-      // Update Legend initial display with the newest closed bar
-      const last = cData.bars[cData.bars.length - 1];
-      const legendEl = document.getElementById('legendValues');
-      if (legendEl && last) {
-        legendEl.innerHTML = `O: <strong class="text-white">${last.open.toFixed(2)}</strong> H: <strong class="text-white">${last.high.toFixed(2)}</strong> L: <strong class="text-white">${last.low.toFixed(2)}</strong> C: <strong class="${last.close >= last.open ? 'text-emerald-400' : 'text-rose-400'}">${last.close.toFixed(2)}</strong>`;
+      const klineBars = cData.bars.map(b => ({
+        timestamp: b.time * 1000,
+        open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
+      }));
+
+      if (initCallback) {
+        // First load (getBars/"init"): hand the chart the full window.
+        initCallback(klineBars);
+      } else if (pushCallback) {
+        // Periodic refresh (subscribeBar): push only the single newest bar.
+        // The chart merges it by timestamp (same ts overwrites, newer ts
+        // appends) - this is what keeps drawn overlays alive, since it
+        // never re-runs the full init/reset pipeline.
+        pushCallback(klineBars[klineBars.length - 1]);
       }
 
-      // Map Nugget Predictions to Chart Markers
-      if (mData.ok && mData.markers) {
-        const markers = [];
-        
-        mData.markers.forEach(m => {
-          // Find the bar matching the prediction target time
-          if (!m.target_bar_utc) return;
-          const targetSec = Math.floor(new Date(m.target_bar_utc).getTime() / 1000);
-          
-          let color = '#94a3b8';
-          let shape = 'circle';
-          let text = `#${m.id} ${m.direction.toUpperCase()}`;
-
-          if (m.kind === 'win') {
-            color = '#10b981';
-            shape = m.direction === 'bullish' ? 'arrowUp' : 'arrowDown';
-            text = `#${m.id} WIN (${m.direction})`;
-          } else if (m.kind === 'loss') {
-            color = '#f43f5e';
-            shape = m.direction === 'bullish' ? 'arrowDown' : 'arrowUp';
-            text = `#${m.id} LOSS (${m.direction})`;
-          } else if (m.kind === 'noise') {
-            color = '#64748b';
-            shape = 'circle';
-            text = `#${m.id} NOISE`;
-          } else if (m.kind === 'no_call_resolved') {
-            // Graded, but Nugget abstained from a direction - win/loss does
-            // not apply. Distinct slate dot so it reads as "resolved, no
-            // call" rather than "still waiting" (amber PENDING below).
-            color = '#71717a';
-            shape = 'circle';
-            text = `#${m.id} NO-CALL (resolved)`;
-          } else {
-            // Pending: has not reached its target bar yet.
-            color = '#f59e0b';
-            shape = m.direction === 'bullish' ? 'arrowUp' : 'arrowDown';
-            text = `#${m.id} PENDING (${m.direction})`;
-          }
-
-          markers.push({
-            time: targetSec,
-            position: m.direction === 'bullish' ? 'belowBar' : 'aboveBar',
-            color: color,
-            shape: shape,
-            text: text,
-          });
-        });
-
-        // Lightweight Charts demands markers sorted ascending by time
-        markers.sort((a, b) => a.time - b.time);
-        candleSeries.setMarkers(markers);
-      }
+      // Indicators/markers must apply AFTER the bars are in, otherwise
+      // createIndicator's calc() runs against an empty kLineDataList.
+      applyActiveIndicators();
+      applyMarkers(mData);
+    } else if (initCallback) {
+      initCallback([]);
     }
-  } catch(e) {
-    console.error('Failed to load chart candles/markers:', e);
+  } catch (e) {
+    console.error('Failed to load chart candles/markers/indicators:', e);
+    if (initCallback) initCallback([]);
   }
+}
+
+function applyMarkers(mData) {
+  if (!candleChart || !mData || !mData.ok || !mData.markers) return;
+
+  // Clear previous prediction markers before redrawing
+  (window.__nuggetMarkerIds || []).forEach(id => candleChart.removeOverlay({ id }));
+  const newIds = [];
+
+  // Group markers by candle timestamp so multiple predictions on the same
+  // bar stack cleanly in a column without colliding (as seen in the reference
+  // image where #61 and #80 stack above the same green candle).
+  const kLineDataList = candleChart.getDataList() || [];
+  const barMap = {};
+  kLineDataList.forEach(k => { barMap[k.timestamp] = k; });
+
+  const byBar = {};
+  mData.markers.forEach(m => {
+    if (!m.target_bar_utc) return;
+    if (!activeMarkerKinds[m.kind]) return;
+
+    // Use entry candle timestamp if available, falling back to target_bar
+    const entryTs = m.created_utc ? new Date(m.created_utc).getTime() : new Date(m.target_bar_utc).getTime();
+
+    // Snap entryTs to the nearest 1h candle timestamp so stacking groups properly
+    const hourMs = 3600 * 1000;
+    const snappedTs = Math.floor(entryTs / hourMs) * hourMs;
+
+    if (!byBar[snappedTs]) byBar[snappedTs] = [];
+    byBar[snappedTs].push(m);
+  });
+
+  // Render stacked markers for each bar
+  Object.keys(byBar).forEach(tsStr => {
+    const ts = parseInt(tsStr, 10);
+    const bar = barMap[ts];
+    // Reference price or candle high
+    const candleHigh = bar ? bar.high : null;
+
+    const list = byBar[ts];
+    // Sort so older ID sits above (level 1), newer ID sits closest to candle (level 0)
+    list.sort((a, b) => a.id - b.id);
+
+    list.forEach((m, idx) => {
+      // In the reference image, the higher stack level (older signal #61)
+      // sits on top of #80. So the index in the list directly maps to stack level.
+      // Most recent signal sits closest to the candle.
+      const stackLevel = list.length - 1 - idx;
+
+      let color = '#5a6b7c'; // default slate grey
+      let statusLabel = m.kind.toUpperCase();
+
+      if (m.kind === 'win') {
+        color = '#10b981'; // emerald green
+        statusLabel = 'WIN';
+      } else if (m.kind === 'loss') {
+        color = '#f43f5e'; // rose red
+        statusLabel = 'LOSS';
+      } else if (m.kind === 'noise') {
+        color = '#5a6b7c'; // muted slate grey
+        statusLabel = 'NOISE';
+      } else if (m.kind === 'no_call_resolved' || m.kind === 'no_call_pending') {
+        color = '#5a6b7c';
+        statusLabel = 'NO-CALL';
+      } else if (m.kind === 'pending') {
+        color = '#f59e0b'; // amber / golden-orange
+        statusLabel = 'PENDING';
+      }
+
+      // Exact text format from reference image:
+      // '#79 NOISE' or '#80 PENDING (bearish)'
+      let displayText = `#${m.id} ${statusLabel}`;
+      if (m.direction && m.direction !== 'no_call' && m.kind === 'pending') {
+        displayText += ` (${m.direction.toLowerCase()})`;
+      }
+
+      const refVal = candleHigh !== null ? candleHigh : m.ref_price;
+
+      const id = candleChart.createOverlay({
+        name: 'nuggetSignalMarker',
+        points: [{ timestamp: ts, value: refVal }],
+        lock: true,
+        extendData: {
+          text: displayText,
+          color: color,
+          kind: m.kind,
+          direction: m.direction,
+          stackLevel: stackLevel,
+        }
+      });
+      if (id) newIds.push(id);
+    });
+  });
+
+  window.__nuggetMarkerIds = newIds;
+}
+
+function toggleMarkerKind(kind) {
+  activeMarkerKinds[kind] = !activeMarkerKinds[kind];
+  // The "No-Call" button covers both grading-lifecycle states of an
+  // abstention (ungraded and resolved) as one toggle.
+  if (kind === 'no_call_resolved') {
+    activeMarkerKinds.no_call_pending = activeMarkerKinds.no_call_resolved;
+  }
+  const idMap = { win: 'btn-mk-win', loss: 'btn-mk-loss', pending: 'btn-mk-pending',
+                  noise: 'btn-mk-noise', no_call_resolved: 'btn-mk-nocall' };
+  const textColorMap = {
+    win: 'text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20',
+    loss: 'text-rose-300 bg-rose-500/10 hover:bg-rose-500/20',
+    pending: 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20',
+    noise: 'text-slate-200 bg-slate-500/10 hover:bg-slate-500/20',
+    no_call_resolved: 'text-zinc-300 bg-zinc-500/10 hover:bg-zinc-500/20',
+  };
+  const btn = document.getElementById(idMap[kind]);
+  if (btn) {
+    const on = activeMarkerKinds[kind];
+    btn.className = `w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left font-semibold ${on ? textColorMap[kind] : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`;
+    const dot = btn.querySelector('.ml-auto');
+    if (dot) dot.className = `ml-auto text-[10px] ${on ? 'text-slate-500' : 'text-transparent'}`;
+  }
+  if (typeof updateIndBadge === 'function') updateIndBadge();
+  // Re-apply from the last fetched marker payload - no need to refetch.
+  if (window.__nuggetMarkerData) {
+    applyMarkers(window.__nuggetMarkerData);
+  }
+}
+
+// Custom indicators registered ONCE, pulling from the SAME /api/indicators
+// payload (rolling EMA/SMA/ATR/RSI computed with predictor.py's own pure
+// math). extendData carries the series so calc() just looks it up by
+// timestamp instead of recomputing - the chart renders exactly the numbers
+// the ledger actually voted on.
+function registerNuggetIndicators() {
+  const lineInd = (name, color, dataKey) => ({
+    name, shortName: name, series: 'price',
+    figures: [{ key: 'v', title: name + ': ', type: 'line' }],
+    calc: (kLineDataList) => {
+      const series = (window.__nuggetIndData && window.__nuggetIndData[dataKey]) || [];
+      const byTime = {};
+      series.forEach(p => { byTime[p.time] = p.value; });
+      return kLineDataList.map(k => ({ v: byTime[Math.floor(k.timestamp / 1000)] }));
+    },
+    styles: { lines: [{ color, size: dataKey === 'sma20' ? 1 : 1.5, style: dataKey === 'sma20' ? 'dashed' : 'solid' }] },
+  });
+
+  klinecharts.registerIndicator(lineInd('EMA12', '#fbbf24', 'ema12'));
+  klinecharts.registerIndicator(lineInd('EMA26', '#38bdf8', 'ema26'));
+  klinecharts.registerIndicator(lineInd('SMA20', '#a78bfa', 'sma20'));
+
+  klinecharts.registerIndicator({
+    name: 'ATRBAND', shortName: 'ATR Band', series: 'price',
+    figures: [
+      { key: 'upper', title: 'ATR+: ', type: 'line' },
+      { key: 'lower', title: 'ATR-: ', type: 'line' },
+    ],
+    calc: (kLineDataList) => {
+      const series = (window.__nuggetIndData && window.__nuggetIndData.atr_band) || [];
+      const byTime = {};
+      series.forEach(p => { byTime[p.time] = p; });
+      return kLineDataList.map(k => {
+        const p = byTime[Math.floor(k.timestamp / 1000)];
+        return { upper: p ? p.upper : undefined, lower: p ? p.lower : undefined };
+      });
+    },
+    styles: { lines: [
+      { color: 'rgba(148,163,184,0.5)', size: 1 },
+      { color: 'rgba(148,163,184,0.5)', size: 1 },
+    ] },
+  });
+
+  klinecharts.registerIndicator({
+    name: 'RSI14', shortName: 'RSI', series: 'normal',
+    figures: [{ key: 'v', title: 'RSI: ', type: 'line' }],
+    calc: (kLineDataList) => {
+      const series = (window.__nuggetIndData && window.__nuggetIndData.rsi14) || [];
+      const byTime = {};
+      series.forEach(p => { byTime[p.time] = p.value; });
+      return kLineDataList.map(k => ({ v: byTime[Math.floor(k.timestamp / 1000)] }));
+    },
+    styles: { lines: [{ color: '#f472b6', size: 1.5 }] },
+  });
+
+  // Custom Pine-Script-style signal overlay matching the reference design:
+  // - Monospaced text uncontained (#ID STATUS (direction))
+  // - Clean vector block arrow (shaft + triangle) or circular dot for noise/no-call
+  // - Placed above candle high with clean vertical stacking for multiple signals
+  klinecharts.registerOverlay({
+    name: 'nuggetSignalMarker',
+    totalStep: 2,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ overlay, coordinates }) => {
+      if (!coordinates.length) return [];
+      const { x, y } = coordinates[0];
+      const data = overlay.extendData || {};
+      const color = data.color || '#f59e0b';
+      const text = data.text || '';
+      const kind = data.kind || 'pending';
+      const direction = data.direction || 'bearish';
+
+      const figures = [];
+      const stackLevel = data.stackLevel || 0;
+      const stackOffset = stackLevel * 28;
+      const tipY = y - 4 - stackOffset;
+
+      if (kind === 'noise' || kind === 'no_call_resolved' || kind === 'no_call_pending') {
+        // Circle marker (grey circular dot beneath text, matching #79 NOISE in reference)
+        const circleY = tipY - 4;
+        figures.push({
+          type: 'circle',
+          attrs: { x, y: circleY, r: 3.5 },
+          styles: { style: 'fill', color: color }
+        });
+        figures.push({
+          type: 'text',
+          attrs: { x, y: circleY - 6, text, align: 'center', baseline: 'bottom' },
+          styles: {
+            color: color,
+            size: 10,
+            family: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            weight: '600',
+            backgroundColor: 'transparent',
+            borderColor: 'transparent',
+            borderSize: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+            paddingBottom: 0,
+          }
+        });
+      } else {
+        // Directional block arrow (rectangular stem + triangular head)
+        const arrowH = 13;
+        const stemW = 3.5;
+        const headW = 9;
+        const headH = 6;
+
+        if (direction === 'bearish') {
+          // Pointing DOWN towards candle high
+          figures.push({
+            type: 'polygon',
+            attrs: {
+              coordinates: [
+                { x: x - stemW / 2, y: tipY - arrowH },
+                { x: x + stemW / 2, y: tipY - arrowH },
+                { x: x + stemW / 2, y: tipY - headH },
+                { x: x + headW / 2, y: tipY - headH },
+                { x: x,             y: tipY },
+                { x: x - headW / 2, y: tipY - headH },
+                { x: x - stemW / 2, y: tipY - headH },
+              ]
+            },
+            styles: { style: 'fill', color: color }
+          });
+          figures.push({
+            type: 'text',
+            attrs: { x, y: tipY - arrowH - 3, text, align: 'center', baseline: 'bottom' },
+            styles: {
+              color: color,
+              size: 10,
+              family: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              weight: '600',
+              backgroundColor: 'transparent',
+              borderColor: 'transparent',
+              borderSize: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+              paddingTop: 0,
+              paddingBottom: 0,
+            }
+          });
+        } else {
+          // Bullish: pointing UP
+          figures.push({
+            type: 'polygon',
+            attrs: {
+              coordinates: [
+                { x: x,             y: tipY - arrowH },
+                { x: x + headW / 2, y: tipY - arrowH + headH },
+                { x: x + stemW / 2, y: tipY - arrowH + headH },
+                { x: x + stemW / 2, y: tipY },
+                { x: x - stemW / 2, y: tipY },
+                { x: x - stemW / 2, y: tipY - arrowH + headH },
+                { x: x - headW / 2, y: tipY - arrowH + headH },
+              ]
+            },
+            styles: { style: 'fill', color: color }
+          });
+          figures.push({
+            type: 'text',
+            attrs: { x, y: tipY - arrowH - 3, text, align: 'center', baseline: 'bottom' },
+            styles: {
+              color: color,
+              size: 10,
+              family: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              weight: '600',
+              backgroundColor: 'transparent',
+              borderColor: 'transparent',
+              borderSize: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+              paddingTop: 0,
+              paddingBottom: 0,
+            }
+          });
+        }
+      }
+
+      return figures;
+    }
+  });
+}
+
+function applyActiveIndicators() {
+  if (!candleChart) return;
+
+  const want = {
+    ema12: 'EMA12', ema26: 'EMA26', sma20: 'SMA20',
+    atr_band: 'ATRBAND', rsi14: 'NUGRSI',
+  };
+
+  Object.entries(want).forEach(([key, name]) => {
+    const onCandlePane = key !== 'rsi14'; // RSI gets its own pane, the rest overlay price
+    if (activeIndicators[key]) {
+      if (!indicatorIds[key]) {
+        // createIndicator returns the indicator's OWN id (not a paneId) -
+        // that id is exactly what removeIndicator's filter needs below.
+        // (An earlier version of this code mistakenly passed the id back
+        // in as "paneId", which never matched anything - the remove
+        // silently no-op'd and every re-toggle stacked a new duplicate.)
+        indicatorIds[key] = candleChart.createIndicator(
+          { name, paneId: onCandlePane ? 'candle_pane' : undefined },
+          onCandlePane,
+        );
+      }
+    } else if (indicatorIds[key]) {
+      candleChart.removeIndicator({ name, id: indicatorIds[key] });
+      indicatorIds[key] = null;
+    }
+  });
+}
+
+function toggleIndicator(key) {
+  activeIndicators[key] = !activeIndicators[key];
+  const btn = document.getElementById(`btn-ind-${key}`);
+  const dotColorMap = {
+    ema12: 'bg-amber-400', ema26: 'bg-sky-400', sma20: 'bg-violet-400',
+    atr_band: 'bg-slate-400', rsi14: 'bg-pink-400',
+  };
+  const textColorMap = {
+    ema12: 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20',
+    ema26: 'text-sky-300 bg-sky-500/10 hover:bg-sky-500/20',
+    sma20: 'text-violet-300 bg-violet-500/10 hover:bg-violet-500/20',
+    atr_band: 'text-slate-200 bg-slate-500/10 hover:bg-slate-500/20',
+    rsi14: 'text-pink-300 bg-pink-500/10 hover:bg-pink-500/20',
+  };
+  if (btn) {
+    const on = activeIndicators[key];
+    btn.className = `w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left font-semibold ${on ? textColorMap[key] : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`;
+    const dot = btn.querySelector('.ml-auto');
+    if (dot) dot.className = `ml-auto text-[10px] ${on ? 'text-slate-500' : 'text-transparent'}`;
+  }
+  const activeCount = Object.values(activeIndicators).filter(Boolean).length;
+  const badge = document.getElementById('indCountBadge');
+  if (badge) badge.textContent = activeCount;
+  applyActiveIndicators();
+}
+
+function toggleIndicatorMenu() {
+  const panel = document.getElementById('indMenuPanel');
+  if (panel) panel.classList.toggle('hidden');
+}
+
+// Close the indicator dropdown when clicking anywhere outside it.
+document.addEventListener('click', (e) => {
+  const wrapper = document.getElementById('indicatorToggles');
+  const panel = document.getElementById('indMenuPanel');
+  if (wrapper && panel && !wrapper.contains(e.target)) {
+    panel.classList.add('hidden');
+  }
+});
+
+// Drawing tools: KLineChart's built-in overlay types (Apache-2.0, free -
+// unlike TradingView's Advanced Charts, no public/no-paywall license
+// restriction, which is why this swap happened in the first place).
+function startDrawing(overlayName) {
+  if (!candleChart) return;
+  const id = candleChart.createOverlay({ name: overlayName });
+  if (id) drawnOverlayIds.push(id);
+}
+
+function clearDrawings() {
+  if (!candleChart) return;
+  drawnOverlayIds.forEach(id => candleChart.removeOverlay({ id }));
+  drawnOverlayIds = [];
 }

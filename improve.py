@@ -149,6 +149,19 @@ def candidate_grid() -> list[dict]:
     p["breadth"]["weight"] = 0.0
     out.append({"name": "dxy-activated", "params": p, "abstain_bar": 0.18})
 
+    # trend-confirmation gate on bearish calls: diagnosed 2026-10-06, bearish
+    # calls hit 1/13 (p=0.0017 vs a fair coin) while the trend indicator's own
+    # contribution disagreed with the call on 12 of those 13 misses - the
+    # model was calling short-term dips against a dominant uptrend and losing
+    # every time. This candidate flips score()'s trend_gate switch on (no
+    # weight change) so a would-be bearish call with a bullish-trend
+    # contribution is suppressed to no_call instead. Tests whether removing
+    # the contrarian-against-trend bearish calls (not reweighting anything)
+    # clears the held-out gate.
+    p = copy.deepcopy(base)
+    p["trend_gate"] = {"enabled": True}
+    out.append({"name": "bearish-trend-gate", "params": p, "abstain_bar": 0.18})
+
     return out
 
 

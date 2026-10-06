@@ -97,7 +97,7 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
     pred_sql = f"SELECT COUNT(*) FROM predictions p {pred_where}"
     total_preds = con.execute(pred_sql, args_p).fetchone()[0]
 
-    pending_where_parts = ["o.prediction_id IS NULL"] + where_p
+    pending_where_parts = ["o.prediction_id IS NULL", "p.direction != 'no_call'"] + where_p
     pending_sql = f"""
         SELECT COUNT(*) FROM predictions p
         LEFT JOIN outcomes o ON o.prediction_id = p.id
@@ -217,6 +217,97 @@ def get_candles(interval: str = "1h", limit: int = 300) -> dict:
     }
 
 
+def get_indicators(interval: str = "1h", limit: int = 300) -> dict:
+    """Rolling EMA12/EMA26/SMA20/RSI14/ATR14-band series over the SAME bars
+    `/api/candles` serves, computed with the exact same pure functions
+    predictor.py uses to score every live prediction (ema/sma/rsi/atr) - so
+    an overlay line is never a different number than what the ledger
+    actually voted on. Read-only: no new table, no new fetch source, no
+    change to predictor.py or the live cycle.
+    """
+    sys.path.insert(0, str(BASE_DIR))
+    import fetch_market as fm
+    import statistics
+
+    allowed = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+    if interval not in allowed:
+        interval = "1h"
+    limit = max(60, min(int(limit or 300), 1000))
+
+    try:
+        bars = fm.fetch_candles(interval, limit)
+    except (fm.FetchError, fm.SchemaError) as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    closes = [b["close"] for b in bars]
+    highs = [b["high"] for b in bars]
+    lows = [b["low"] for b in bars]
+    times = [b["open_time"] // 1000 for b in bars]
+
+    def rolling_ema(vals, period):
+        out = [None] * len(vals)
+        if len(vals) < period:
+            return out
+        k = 2.0 / (period + 1)
+        e = statistics.fmean(vals[:period])
+        out[period - 1] = e
+        for i in range(period, len(vals)):
+            e = vals[i] * k + e * (1 - k)
+            out[i] = e
+        return out
+
+    def rolling_sma(vals, period):
+        return [statistics.fmean(vals[i - period + 1:i + 1]) if i >= period - 1 else None
+                for i in range(len(vals))]
+
+    def rolling_atr(highs, lows, closes, period):
+        out = [None] * len(closes)
+        if len(closes) < period + 1:
+            return out
+        trs = [None]
+        for i in range(1, len(closes)):
+            trs.append(max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]),
+                            abs(lows[i] - closes[i - 1])))
+        for i in range(period, len(closes)):
+            window = trs[i - period + 1:i + 1]
+            out[i] = statistics.fmean(window)
+        return out
+
+    def rolling_rsi(closes, period):
+        out = [None] * len(closes)
+        if len(closes) < period + 1:
+            return out
+        for i in range(period, len(closes)):
+            window = closes[i - period:i + 1]
+            gains = [max(window[j] - window[j - 1], 0) for j in range(1, len(window))]
+            losses = [max(window[j - 1] - window[j], 0) for j in range(1, len(window))]
+            ag, al = statistics.fmean(gains), statistics.fmean(losses)
+            out[i] = 100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al)
+        return out
+
+    ema12 = rolling_ema(closes, 12)
+    ema26 = rolling_ema(closes, 26)
+    sma20 = rolling_sma(closes, 20)
+    atr14 = rolling_atr(highs, lows, closes, 14)
+    rsi14 = rolling_rsi(closes, 14)
+
+    def series(vals):
+        return [{"time": t, "value": round(v, 4)} for t, v in zip(times, vals) if v is not None]
+
+    atr_band = [{"time": t, "upper": round(c + a, 4), "lower": round(c - a, 4)}
+                for t, c, a in zip(times, closes, atr14) if a is not None]
+
+    return {
+        "ok": True,
+        "interval": interval,
+        "ema12": series(ema12),
+        "ema26": series(ema26),
+        "sma20": series(sma20),
+        "rsi14": series(rsi14),
+        "atr_band": atr_band,
+    }
+
+
 def get_markers(signal_source: str | None = "technical") -> dict:
     """Every graded prediction as a chart marker.
 
@@ -233,7 +324,7 @@ def get_markers(signal_source: str | None = "technical") -> dict:
 
     where_clause = f"WHERE {' AND '.join(where)}" if where else ""
     sql = f"""
-        SELECT p.id, p.created_wib, p.direction, p.ref_price, p.noise_threshold,
+        SELECT p.id, p.created_wib, p.created_utc, p.direction, p.ref_price, p.noise_threshold,
                p.signal_source, p.target_bar_utc,
                o.realized_price, o.move, o.is_noise, o.correct, o.graded_wib
         FROM predictions p
@@ -248,7 +339,14 @@ def get_markers(signal_source: str | None = "technical") -> dict:
     for r in rows:
         graded = r["graded_wib"] is not None
         if not graded:
-            kind, label, pos = "pending", f"#{r['id']} PENDING", "inBar"
+            if r["direction"] == "no_call":
+                # An abstention isn't an ongoing directional bet waiting to
+                # resolve - it never had a side to win or lose. Distinct from
+                # "pending" (bullish/bearish, target bar not reached yet) so
+                # the Pending marker toggle only ever shows real live calls.
+                kind, label, pos = "no_call_pending", f"#{r['id']} NO-CALL (ungraded)", "inBar"
+            else:
+                kind, label, pos = "pending", f"#{r['id']} PENDING", "inBar"
         elif r["is_noise"]:
             kind, label, pos = "noise", f"#{r['id']} NOISE", "inBar"
         elif r["correct"] == 1:
@@ -266,6 +364,7 @@ def get_markers(signal_source: str | None = "technical") -> dict:
         out.append({
             "id": r["id"],
             "created_wib": r["created_wib"],
+            "created_utc": r["created_utc"],
             "target_bar_utc": r["target_bar_utc"],
             "direction": r["direction"],
             "ref_price": r["ref_price"],
@@ -503,6 +602,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/markers":
             sig = query.get("signal", ["technical"])[0]
             self._json(get_markers(signal_source=sig))
+            return
+
+        # API: /api/indicators - EMA12/EMA26/SMA20/RSI14/ATR14-band overlays
+        if path == "/api/indicators":
+            interval = query.get("interval", ["1h"])[0]
+            limit = query.get("limit", ["300"])[0]
+            self._json(get_indicators(interval, limit))
             return
 
         # API: /api/live

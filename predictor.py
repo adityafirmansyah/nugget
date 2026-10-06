@@ -77,6 +77,12 @@ def build_params():
         "volume_confirm": {"weight": 0.10, "lookback": 24},
         "session_sweep": {"weight": 0.0, "lookback": 8},
         "dxy_proxy": {"weight": 0.0, "lookback": 24},
+        # Candidate gate, disabled by default (see score()'s trend_gate block).
+        # Not a weight - a boolean switch that `improve.py` may test as a
+        # candidate and promote through the normal held-out gate. Diagnosis
+        # 2026-10-06: bearish calls hit 1/13 (p=0.0017) when the trend
+        # indicator itself disagreed with the call direction.
+        "trend_gate": {"enabled": False},
     }
 
 
@@ -223,6 +229,23 @@ def score(f: dict, params: dict | None = None) -> tuple[float, dict]:
         contrib["dxy_proxy"] = -p["weight"] * max(-1.0, min(1.0, dxy_roc / 1.0))
 
     total = sum(contrib.values())
+
+    # Bearish-trend gate (candidate, OFF by default - see build_params docstring
+    # below). Diagnosis 2026-10-06: graded bearish calls hit 1/13 (p=0.0017 vs
+    # a fair coin) while the trend indicator itself was voting bullish on 12 of
+    # those 13 misses - the model was calling short-term dips against a
+    # dominant uptrend and losing every time. This gate does not touch any
+    # weight; it only suppresses a bearish TOTAL when the trend parameter's
+    # own contribution disagrees with it, pushing the call to no_call instead
+    # of a contrarian bearish. Disabled (`enabled: False`) in the incumbent
+    # params, so this function's output is UNCHANGED for every existing
+    # stored params_json (old dicts have no "trend_gate" key -> params.get
+    # default -> disabled). Only a candidate in improve.py's candidate_grid()
+    # may flip it on, and only a held-out promotion may make it live.
+    gate = params.get("trend_gate", {"enabled": False})
+    if gate.get("enabled") and total < 0 and contrib.get("trend", 0) > 0:
+        total = 0.0
+
     total = max(-1.0, min(1.0, total))
     return total, {k: round(v, 4) for k, v in contrib.items()}
 
