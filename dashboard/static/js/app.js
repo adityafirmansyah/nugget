@@ -1270,13 +1270,17 @@ function applyActiveIndicators() {
   });
 }
 
+function updateIndBadge() {
+  const indCount = Object.values(activeIndicators).filter(Boolean).length;
+  const primaryKinds = ['pending', 'win', 'loss', 'noise', 'no_call_resolved'];
+  const mkCount = primaryKinds.filter(k => activeMarkerKinds[k]).length;
+  const badge = document.getElementById('indCountBadge');
+  if (badge) badge.textContent = `${indCount + mkCount}`;
+}
+
 function toggleIndicator(key) {
   activeIndicators[key] = !activeIndicators[key];
   const btn = document.getElementById(`btn-ind-${key}`);
-  const dotColorMap = {
-    ema12: 'bg-amber-400', ema26: 'bg-sky-400', sma20: 'bg-violet-400',
-    atr_band: 'bg-slate-400', rsi14: 'bg-pink-400',
-  };
   const textColorMap = {
     ema12: 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20',
     ema26: 'text-sky-300 bg-sky-500/10 hover:bg-sky-500/20',
@@ -1290,9 +1294,7 @@ function toggleIndicator(key) {
     const dot = btn.querySelector('.ml-auto');
     if (dot) dot.className = `ml-auto text-[10px] ${on ? 'text-slate-500' : 'text-transparent'}`;
   }
-  const activeCount = Object.values(activeIndicators).filter(Boolean).length;
-  const badge = document.getElementById('indCountBadge');
-  if (badge) badge.textContent = activeCount;
+  updateIndBadge();
   applyActiveIndicators();
 }
 
