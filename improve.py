@@ -126,11 +126,28 @@ def candidate_grid() -> list[dict]:
     p = copy.deepcopy(base); p["position"]["weight"] = 0.35; p["volume_confirm"]["weight"] = 0.05
     out.append({"name": "position-heavy", "params": p, "abstain_bar": 0.18})
 
-    # more selective (fewer, stronger calls)
-    out.append({"name": "selective", "params": copy.deepcopy(base), "abstain_bar": 0.35})
+    # more selective (fewer, stronger calls): a HIGHER abstain_bar alone
+    # cannot change which direction is called, only how many bars clear the
+    # bar - score() is a pure function of (features, weights), so copying
+    # base weights unchanged makes this byte-identical to the incumbent's
+    # raw score on every bar, never a real alternative hypothesis. Pair the
+    # tighter bar with a conviction-weighted tilt: trend+rsi (the two
+    # directional-confirmation factors) up, breadth+volume_confirm (the
+    # noisier confirmation factors) down - "selective" now means pickier
+    # AND more trend/momentum-confirmed, not just a renamed incumbent.
+    p = copy.deepcopy(base)
+    p["trend"]["weight"] = 0.30; p["rsi"]["weight"] = 0.25
+    p["breadth"]["weight"] = 0.05; p["volume_confirm"]["weight"] = 0.05
+    out.append({"name": "selective", "params": p, "abstain_bar": 0.35})
 
-    # more permissive
-    out.append({"name": "permissive", "params": copy.deepcopy(base), "abstain_bar": 0.08})
+    # more permissive: same problem as selective above, mirrored. Pair the
+    # looser abstain_bar with a flatter weight spread toward breadth +
+    # volume_confirm (the factors most likely to fire on marginal bars),
+    # trading some trend/position weight for broader sensitivity.
+    p = copy.deepcopy(base)
+    p["trend"]["weight"] = 0.20; p["position"]["weight"] = 0.15
+    p["breadth"]["weight"] = 0.15; p["volume_confirm"]["weight"] = 0.20
+    out.append({"name": "permissive", "params": p, "abstain_bar": 0.08})
 
     # session-sweep activated: give the liquidity-sweep microstructure signal
     # a real weight (carved from volume_confirm, its weakest-measured peer per
