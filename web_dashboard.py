@@ -155,6 +155,12 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
     recent_rows = [dict(r) for r in con.execute(recent_sql, args_p).fetchall()]
     for r in recent_rows:
         r["contributions"] = _contributions_for_row(r)
+        score = sum(r["contributions"].values()) if r.get("contributions") else (r.get("confidence") or 0.0)
+        if r.get("direction") == "bearish" and score > 0:
+            score = -score
+        r["score"] = round(score, 4)
+        r["bullish_confidence"] = round(0.5 + 0.5 * score, 4)
+        r["bearish_confidence"] = round(0.5 - 0.5 * score, 4)
 
     con.close()
 

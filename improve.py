@@ -60,7 +60,7 @@ def load_graded(con) -> list[dict]:
         """SELECT p.id, p.features_json, p.signal_source, p.direction AS made_call,
                   o.realized_dir, o.correct, o.is_noise, o.base_rate, o.move
            FROM predictions p JOIN outcomes o ON o.prediction_id = p.id
-           WHERE o.is_noise = 0
+           WHERE o.is_noise = 0 AND p.signal_source = 'technical'
            ORDER BY p.id ASC""").fetchall()
     out = []
     for r in rows:

@@ -551,10 +551,11 @@ function openDetailsModal(id) {
     const scoreContainer = document.getElementById('modalScorecardContainer');
     const scoreBadge = document.getElementById('modalTotalScoreBadge');
     
-    const scoreVal = p.confidence !== undefined ? p.confidence : 0;
-    const signedScore = (p.direction === 'bearish' ? -scoreVal : scoreVal).toFixed(3);
-    scoreBadge.textContent = `Total Score: ${signedScore > 0 ? '+' : ''}${signedScore} (Bar: ±0.18)`;
-    scoreBadge.className = `text-xs font-mono px-2 py-0.5 rounded font-bold ${signedScore >= 0.18 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : (signedScore <= -0.18 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-300')}`;
+    const scoreVal = p.score !== undefined ? p.score : (p.direction === 'bearish' ? -p.confidence : p.confidence || 0);
+    const pBull = p.bullish_confidence !== undefined ? (p.bullish_confidence * 100).toFixed(1) : ((0.5 + 0.5 * scoreVal) * 100).toFixed(1);
+    const pBear = p.bearish_confidence !== undefined ? (p.bearish_confidence * 100).toFixed(1) : ((0.5 - 0.5 * scoreVal) * 100).toFixed(1);
+    scoreBadge.textContent = `Score: ${scoreVal > 0 ? '+' : ''}${Number(scoreVal).toFixed(3)} | 🐂 ${pBull}% Bull · 🐻 ${pBear}% Bear (Bar: ±0.18)`;
+    scoreBadge.className = `text-xs font-mono px-2 py-0.5 rounded font-bold ${scoreVal >= 0.18 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : (scoreVal <= -0.18 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-300')}`;
 
     const indicatorMeta = {
       position: {

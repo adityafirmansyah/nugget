@@ -172,7 +172,10 @@ def run(now: datetime | None = None, *, dry_run: bool = False) -> dict:
         out["action"] = "predicted"
         out["prediction"] = {
             "id": pid, "direction": p["direction"], "score": p["score"],
-            "confidence": p["confidence"], "ref_price": ref,
+            "confidence": p["confidence"],
+            "bullish_confidence": p.get("bullish_confidence"),
+            "bearish_confidence": p.get("bearish_confidence"),
+            "ref_price": ref,
             "target_bar_utc": target.isoformat(timespec="seconds"),
             "noise_threshold": p["noise_threshold"],
             "contributions": p["contributions"],
@@ -214,11 +217,26 @@ def format_hourly_delivery(r: dict) -> str:
     p = r.get("prediction", {}) or {}
     graded = [g for g in r.get("graded", []) if g.get("status") == "graded"]
 
+    score = p.get("score", 0.0)
+    p_bull = p.get("bullish_confidence")
+    p_bear = p.get("bearish_confidence")
+    if p_bull is None or p_bear is None:
+        p_bull = round(0.5 + 0.5 * score, 4)
+        p_bear = round(0.5 - 0.5 * score, 4)
+
+    dir_str = p.get("direction", "no_call")
+    if dir_str == "bullish":
+        verdict_badge = "🟢 **Bullish**"
+    elif dir_str == "bearish":
+        verdict_badge = "🔴 **Bearish**"
+    else:
+        verdict_badge = "⚪ **No Call** (Abstained / Neutral)"
+
     lines = [
         f"**Hourly cycle** — {str(r.get('slot_wib'))[:16]} WIB",
         "",
-        f"**Call** — `{p.get('direction')}` "
-        f"(score {p.get('score')}, conf {p.get('confidence')})",
+        f"**Verdict** — {verdict_badge}",
+        f"**Confidence** — 🐂 **{(p_bull or 0.0)*100:.1f}% Bullish** · 🐻 **{(p_bear or 0.0)*100:.1f}% Bearish** (Conviction: {p.get('confidence', 0):.2f})",
         f"**Ref price** — ${p.get('ref_price')}  ·  "
         f"noise threshold ${p.get('noise_threshold')}",
     ]

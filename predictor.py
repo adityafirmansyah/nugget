@@ -140,19 +140,15 @@ def dxy_proxy_roc(dxy_bars: list[dict] | None, lookback: int = 24) -> float | No
 
 
 def compute_features(bars: list[dict], dxy_bars: list[dict] | None = None) -> dict:
-    """Technical feature set from OHLCV bars. Last bar = 'now'.
+    """Technical feature set from OHLCV bars.
 
-    `dxy_bars` is OPTIONAL and additive: every existing caller that passes
-    only `bars` still gets back exactly the same keys it got before, plus the
-    two new ones below with a safe None/0 default. This is what keeps old
-    stored features_json (which never has these keys) scoring correctly
-    through score()'s .get() lookups - this function and that one are the
-    only two places that need to agree on the new keys' defaults.
+    Uses completed closed bars to avoid unclosed partial-hour volume and candle distortion.
     """
-    closes = [b["close"] for b in bars]
-    highs = [b["high"] for b in bars]
-    lows = [b["low"] for b in bars]
-    vols = [b["volume"] for b in bars]
+    closed_bars = bars[:-1] if len(bars) > 60 else bars
+    closes = [b["close"] for b in closed_bars]
+    highs = [b["high"] for b in closed_bars]
+    lows = [b["low"] for b in closed_bars]
+    vols = [b["volume"] for b in closed_bars]
 
     a = atr(highs, lows, closes, 14)
     e12, e26 = ema(closes, 12), ema(closes, 26)
@@ -174,7 +170,7 @@ def compute_features(bars: list[dict], dxy_bars: list[dict] | None = None) -> di
         "vol_vs_avg": (vols[-1] / avg_vol) if avg_vol else None,
         "atr_pct": (a / closes[-1] * 100) if a else None,
         "bars": len(bars),
-        "session_sweep": session_sweep_signal(bars),
+        "session_sweep": session_sweep_signal(closed_bars),
         "dxy_roc24": dxy_proxy_roc(dxy_bars, 24),
     }
 
@@ -250,17 +246,19 @@ def score(f: dict, params: dict | None = None) -> tuple[float, dict]:
     return total, {k: round(v, 4) for k, v in contrib.items()}
 
 
-def explain_prediction(features: dict, contributions: dict, direction: str, score: float, noise_thr: float) -> str:
+def explain_prediction(features: dict, contributions: dict, direction: str, score: float, noise_thr: float, p_bull: float, p_bear: float) -> str:
     """Generate a clean, human-readable rationale for the prediction."""
+    conf_summary = f"Confidence: {p_bull*100:.1f}% Bullish · {p_bear*100:.1f}% Bearish (Score: {score:+.3f})."
+
     if direction == "no_call":
-        return f"Market in low-conviction chop (|score|={abs(score):.2f} < 0.18 abstain threshold). Volatility filter: ${noise_thr:.2f}."
+        return f"{conf_summary} Market in low-conviction chop (|score|={abs(score):.2f} < {ABSTAIN_BAR:.2f} abstain threshold). Volatility filter: ${noise_thr:.2f}."
     
     # Sort strongest contributing parameters
     drivers = sorted(contributions.items(), key=lambda kv: abs(kv[1]), reverse=True)
     top_pos = [f"{k} (+{v:.2f})" for k, v in drivers if v > 0.03]
     top_neg = [f"{k} ({v:.2f})" for k, v in drivers if v < -0.03]
     
-    parts = []
+    parts = [conf_summary]
     close = features.get("close", 0)
     sma20 = features.get("sma20", 0)
     rsi14 = features.get("rsi14", 50)
@@ -312,23 +310,28 @@ def predict(bars: list[dict], params: dict | None = None,
     features = compute_features(bars, dxy_bars)
     s, contrib = score(features, params)
 
+    # Probabilistic confidence for BOTH directions (sums to 100%)
+    p_bull = round(0.5 + 0.5 * s, 4)
+    p_bear = round(0.5 - 0.5 * s, 4)
+
     if abs(s) < ABSTAIN_BAR:
         direction = "no_call"
     else:
         direction = "bullish" if s > 0 else "bearish"
 
     noise_thr = round(NOISE_ATR_MULT * (features["atr14"] or 0), 4)
-    reason = explain_prediction(features, contrib, direction, s, noise_thr)
+    reason = explain_prediction(features, contrib, direction, s, noise_thr, p_bull, p_bear)
 
     return {
         "direction": direction,
         "score": round(s, 4),
         "confidence": round(min(1.0, abs(s)), 4),
+        "bullish_confidence": p_bull,
+        "bearish_confidence": p_bear,
         "features": features,
         "contributions": contrib,
         "model_version": MODEL_VERSION,
         "params": params or build_params(),
-        # the threshold this call will be graded against - stored at forecast time
         "noise_threshold": noise_thr,
         "reason": reason,
     }
