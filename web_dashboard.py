@@ -162,6 +162,31 @@ def get_stats_data(days: int | None = None, signal_source: str | None = None) ->
         r["bullish_confidence"] = round(0.5 + 0.5 * score, 4)
         r["bearish_confidence"] = round(0.5 - 0.5 * score, 4)
 
+        # Ensure tp_price and sl_price are present for technical directional predictions
+        inputs = {}
+        try:
+            inputs = json.loads(r.get("inputs_json") or "{}")
+        except Exception:
+            pass
+        tp = inputs.get("tp_price")
+        sl = inputs.get("sl_price")
+        if (tp is None or sl is None) and r.get("direction") in ("bullish", "bearish") and r.get("signal_source") == "technical":
+            feats = {}
+            try:
+                feats = json.loads(r.get("features_json") or "{}")
+            except Exception:
+                pass
+            atr14 = feats.get("atr14") or (r["noise_threshold"] / 0.5 if r.get("noise_threshold") else None)
+            if atr14 and r.get("ref_price"):
+                if r["direction"] == "bullish":
+                    tp = round(r["ref_price"] + 1.5 * atr14, 2)
+                    sl = round(r["ref_price"] - 1.0 * atr14, 2)
+                else:
+                    tp = round(r["ref_price"] - 1.5 * atr14, 2)
+                    sl = round(r["ref_price"] + 1.0 * atr14, 2)
+        r["tp_price"] = tp
+        r["sl_price"] = sl
+
     con.close()
 
     return {

@@ -401,6 +401,16 @@ function renderTable(predictions) {
       }
     }
 
+    let tpSlHtml = '<span class="text-slate-500">—</span>';
+    if (p.tp_price && p.sl_price && (isBull || isBear)) {
+      tpSlHtml = `
+        <div class="flex flex-col items-end gap-0.5">
+          <span class="text-emerald-400 font-medium text-xs whitespace-nowrap" title="Take Profit (1.5× ATR)">🎯 $${Number(p.tp_price).toFixed(2)}</span>
+          <span class="text-rose-400 text-[11px] whitespace-nowrap" title="Cut Loss (1.0× ATR)">🛑 $${Number(p.sl_price).toFixed(2)}</span>
+        </div>
+      `;
+    }
+
     return `
       <tr class="hover:bg-slate-800/40 transition-colors cursor-pointer group" onclick="openDetailsModal(${p.id})">
         <td class="py-3 px-4 font-mono font-medium text-slate-400 group-hover:text-amber-400">#${p.id}</td>
@@ -422,6 +432,7 @@ function renderTable(predictions) {
           </div>
         </td>
         <td class="py-3 px-4 text-right font-mono tabular">${p.ref_price.toFixed(2)}</td>
+        <td class="py-3 px-4 text-right font-mono tabular">${tpSlHtml}</td>
         <td class="py-3 px-4 text-right font-mono tabular text-white">${p.realized_price ? p.realized_price.toFixed(2) : '—'}</td>
         <td class="py-3 px-4 text-right font-mono tabular font-medium ${moveColor}">${moveText}</td>
         <td class="py-3 px-4 text-center">${statusBadge}</td>
@@ -708,6 +719,28 @@ function openDetailsModal(id) {
   } else {
     outcomeEl.textContent = 'Pending Grading';
     outcomeEl.className = 'font-bold text-base mt-1 text-amber-400';
+  }
+
+  // Populate Trade Targets (TP / SL)
+  const targetsRow = document.getElementById('modalTargetsRow');
+  const tpEl = document.getElementById('modalTpPrice');
+  const tpPtsEl = document.getElementById('modalTpPoints');
+  const slEl = document.getElementById('modalSlPrice');
+  const slPtsEl = document.getElementById('modalSlPoints');
+
+  let targetFeats = {};
+  try { targetFeats = JSON.parse(p.features_json || '{}'); } catch(e){}
+
+  const isDirectional = isBull || isBear;
+  if (targetsRow && isDirectional && p.tp_price && p.sl_price) {
+    targetsRow.classList.remove('hidden');
+    const atrVal = targetFeats.atr14 || (p.noise_threshold ? p.noise_threshold / 0.5 : 0);
+    if (tpEl) tpEl.textContent = `$${Number(p.tp_price).toFixed(2)}`;
+    if (slEl) slEl.textContent = `$${Number(p.sl_price).toFixed(2)}`;
+    if (tpPtsEl) tpPtsEl.textContent = atrVal ? `${(1.5 * atrVal).toFixed(2)} pts away` : '';
+    if (slPtsEl) slPtsEl.textContent = atrVal ? `${(1.0 * atrVal).toFixed(2)} pts away` : '';
+  } else if (targetsRow) {
+    targetsRow.classList.add('hidden');
   }
 
   // Sources & Inputs

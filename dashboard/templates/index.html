@@ -402,6 +402,7 @@
               <th class="py-3 px-4">Direction</th>
               <th class="py-3 px-4">Confidence & Rationale</th>
               <th class="py-3 px-4 text-right">Ref Price</th>
+              <th class="py-3 px-4 text-right">Target (TP / SL)</th>
               <th class="py-3 px-4 text-right">Realized</th>
               <th class="py-3 px-4 text-right">Move (pts)</th>
               <th class="py-3 px-4 text-center">Status</th>
@@ -409,7 +410,7 @@
           </thead>
           <tbody id="ledgerTableBody" class="divide-y divide-slate-800/60 text-slate-300">
             <tr>
-              <td colspan="10" class="text-center py-6 text-slate-500">Loading ledger data...</td>
+              <td colspan="11" class="text-center py-6 text-slate-500">Loading ledger data...</td>
             </tr>
           </tbody>
         </table>
@@ -568,6 +569,24 @@
           </div>
         </div>
 
+        <!-- Trade Targets (TP / SL) -->
+        <div id="modalTargetsRow" class="grid grid-cols-2 gap-3 text-xs font-mono">
+          <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
+            <div class="text-slate-400 text-[11px] flex items-center justify-between">
+              <span>Take Profit (1.5× ATR)</span>
+              <span id="modalTpPoints" class="text-emerald-400 font-semibold text-[10px]"></span>
+            </div>
+            <div id="modalTpPrice" class="text-emerald-400 font-bold text-base mt-1">—</div>
+          </div>
+          <div class="bg-slate-950/40 border border-slate-800/80 rounded-lg p-3">
+            <div class="text-slate-400 text-[11px] flex items-center justify-between">
+              <span>Cut Loss (1.0× ATR)</span>
+              <span id="modalSlPoints" class="text-rose-400 font-semibold text-[10px]"></span>
+            </div>
+            <div id="modalSlPrice" class="text-rose-400 font-bold text-base mt-1">—</div>
+          </div>
+        </div>
+
         <!-- Indicator Scorecard Breakdown (Technical Only) -->
         <div id="modalTechnicalSection" class="space-y-6">
           <div class="space-y-3">
@@ -622,6 +641,6 @@
     <div class="text-[11px] text-slate-600 mt-1">Learning instrument and reference only. Explicitly NOT financial advice.</div>
   </footer>
 
-  <script src="/static/js/app.js?v=20261013b"></script>
+  <script src="/static/js/app.js?v=20261013c"></script>
 </body>
 </html>
