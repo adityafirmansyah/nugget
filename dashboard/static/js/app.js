@@ -569,9 +569,10 @@ function openDetailsModal(id) {
     const scoreBadge = document.getElementById('modalTotalScoreBadge');
     
     const scoreVal = p.score !== undefined ? p.score : (p.direction === 'bearish' ? -p.confidence : p.confidence || 0);
+    const signedScore = `${scoreVal > 0 ? '+' : ''}${Number(scoreVal).toFixed(3)}`;
     const pBull = p.bullish_confidence !== undefined ? (p.bullish_confidence * 100).toFixed(1) : ((0.5 + 0.5 * scoreVal) * 100).toFixed(1);
     const pBear = p.bearish_confidence !== undefined ? (p.bearish_confidence * 100).toFixed(1) : ((0.5 - 0.5 * scoreVal) * 100).toFixed(1);
-    scoreBadge.textContent = `Score: ${scoreVal > 0 ? '+' : ''}${Number(scoreVal).toFixed(3)} | 🐂 ${pBull}% Bull · 🐻 ${pBear}% Bear (Bar: ±0.18)`;
+    scoreBadge.textContent = `Score: ${signedScore} | 🐂 ${pBull}% Bull · 🐻 ${pBear}% Bear (Bar: ±0.18)`;
     scoreBadge.className = `text-xs font-mono px-2 py-0.5 rounded font-bold ${scoreVal >= 0.18 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : (scoreVal <= -0.18 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-300')}`;
 
     const indicatorMeta = {
@@ -690,41 +691,24 @@ function openDetailsModal(id) {
 
   const outcomeEl = document.getElementById('modalOutcomeStatus');
   if (p.graded_wib) {
+    const moveStr = p.move !== null && p.move !== undefined ? `${p.move > 0 ? '+' : ''}${p.move.toFixed(2)} pts` : '';
     if (p.is_noise) {
       outcomeEl.textContent = 'NOISE (Ignored)';
       outcomeEl.className = 'font-bold text-base mt-1 text-slate-400';
     } else if (p.correct === 1) {
-      outcomeEl.textContent = `WIN (+${p.move.toFixed(2)} pts)`;
+      outcomeEl.textContent = `WIN (${moveStr})`;
       outcomeEl.className = 'font-bold text-base mt-1 text-emerald-400';
     } else if (p.correct === 0) {
-      outcomeEl.textContent = `LOSS (${p.move.toFixed(2)} pts)`;
+      outcomeEl.textContent = `LOSS (${moveStr})`;
       outcomeEl.className = 'font-bold text-base mt-1 text-rose-400';
+    } else {
+      outcomeEl.textContent = 'NO-CALL (Resolved)';
+      outcomeEl.className = 'font-bold text-base mt-1 text-slate-400';
     }
   } else {
     outcomeEl.textContent = 'Pending Grading';
     outcomeEl.className = 'font-bold text-base mt-1 text-amber-400';
   }
-
-  // Populate features
-  const featuresGrid = document.getElementById('modalFeaturesGrid');
-  let feats = {};
-  try { feats = JSON.parse(p.features_json || '{}'); } catch(e){}
-
-  const featureItems = [
-    { label: 'RSI (14)', val: feats.rsi14 ? feats.rsi14.toFixed(1) : '—', color: feats.rsi14 > 55 ? 'text-emerald-400' : (feats.rsi14 < 45 ? 'text-rose-400' : 'text-slate-300') },
-    { label: '20-SMA', val: feats.sma20 ? `$${feats.sma20.toFixed(1)}` : '—', color: 'text-slate-300' },
-    { label: 'Fast EMA (12)', val: feats.ema12 ? `$${feats.ema12.toFixed(1)}` : '—', color: 'text-slate-300' },
-    { label: 'Slow EMA (26)', val: feats.ema26 ? `$${feats.ema26.toFixed(1)}` : '—', color: 'text-slate-300' },
-    { label: 'Volatility (ATR14)', val: feats.atr14 ? `$${feats.atr14.toFixed(2)}` : '—', color: 'text-amber-400' },
-    { label: 'Volume vs Avg', val: feats.vol_vs_avg ? `${feats.vol_vs_avg.toFixed(2)}x` : '—', color: 'text-slate-300' }
-  ];
-
-  featuresGrid.innerHTML = featureItems.map(f => `
-    <div class="bg-slate-950/40 p-2.5 rounded-lg border border-slate-800">
-      <div class="text-[10px] text-slate-500 uppercase">${f.label}</div>
-      <div class="font-bold text-xs mt-0.5 ${f.color}">${f.val}</div>
-    </div>
-  `).join('');
 
   // Sources & Inputs
   let inputs = {};
