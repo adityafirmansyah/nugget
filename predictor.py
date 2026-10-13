@@ -25,6 +25,25 @@ import statistics
 MODEL_VERSION = "v0.1-technical-multi-param"
 NOISE_ATR_MULT = 0.5      # moves below this fraction of ATR14 are noise
 ABSTAIN_BAR = 0.18        # |score| below this -> no_call
+TP_ATR_MULT = 1.5         # Take Profit multiplier on ATR14
+SL_ATR_MULT = 1.0         # Cut Loss (Stop Loss) multiplier on ATR14
+MAX_HOLDING_HOURS = 24    # Maximum holding time before time-stop conclusion
+
+
+def calculate_barriers(ref_price: float | None, atr14: float | None, direction: str,
+                       tp_mult: float = TP_ATR_MULT, sl_mult: float = SL_ATR_MULT) -> tuple[float | None, float | None]:
+    """Calculate Take Profit and Cut Loss (Stop Loss) based on ATR."""
+    if ref_price is None or atr14 is None or direction not in ("bullish", "bearish"):
+        return None, None
+    if direction == "bullish":
+        tp = round(ref_price + tp_mult * atr14, 2)
+        sl = round(ref_price - sl_mult * atr14, 2)
+    elif direction == "bearish":
+        tp = round(ref_price - tp_mult * atr14, 2)
+        sl = round(ref_price + sl_mult * atr14, 2)
+    else:
+        return None, None
+    return tp, sl
 
 
 def ema(vals, period):
@@ -301,11 +320,13 @@ def explain_prediction(features: dict, contributions: dict, direction: str, scor
 
 
 def predict(bars: list[dict], params: dict | None = None,
-           dxy_bars: list[dict] | None = None) -> dict:
-    """Full decision: direction, confidence, features, contributions.
+            dxy_bars: list[dict] | None = None,
+            ref_price: float | None = None) -> dict:
+    """Full decision: direction, confidence, features, contributions, barriers.
 
     `dxy_bars` is optional; omitting it just means the dxy_proxy feature is
     None (and, since its weight defaults to 0.0, contributes nothing).
+    `ref_price` is the spot/entry price to anchor Take Profit and Cut Loss.
     """
     features = compute_features(bars, dxy_bars)
     s, contrib = score(features, params)
@@ -322,6 +343,9 @@ def predict(bars: list[dict], params: dict | None = None,
     noise_thr = round(NOISE_ATR_MULT * (features["atr14"] or 0), 4)
     reason = explain_prediction(features, contrib, direction, s, noise_thr, p_bull, p_bear)
 
+    ref = ref_price if ref_price is not None else features.get("close")
+    tp_price, sl_price = calculate_barriers(ref, features.get("atr14"), direction)
+
     return {
         "direction": direction,
         "score": round(s, 4),
@@ -334,6 +358,12 @@ def predict(bars: list[dict], params: dict | None = None,
         "params": params or build_params(),
         "noise_threshold": noise_thr,
         "reason": reason,
+        "ref_price": ref,
+        "tp_price": tp_price,
+        "sl_price": sl_price,
+        "tp_atr_mult": TP_ATR_MULT,
+        "sl_atr_mult": SL_ATR_MULT,
+        "max_holding_hours": MAX_HOLDING_HOURS,
     }
 
 
