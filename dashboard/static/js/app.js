@@ -376,18 +376,28 @@ function renderTable(predictions) {
     const moveText = p.move !== null ? `${p.move > 0 ? '+' : ''}${p.move.toFixed(2)}` : '—';
     const moveColor = p.move > 0 ? 'text-emerald-400' : (p.move < 0 ? 'text-rose-400' : 'text-slate-400');
     
+    const scoreVal = p.score !== undefined ? p.score : (p.direction === 'bearish' ? -p.confidence : p.confidence || 0);
+    const pBull = p.bullish_confidence !== undefined 
+      ? (p.bullish_confidence * 100).toFixed(1) 
+      : ((0.5 + 0.5 * scoreVal) * 100).toFixed(1);
+    const pBear = p.bearish_confidence !== undefined 
+      ? (p.bearish_confidence * 100).toFixed(1) 
+      : ((0.5 - 0.5 * scoreVal) * 100).toFixed(1);
+
     let reasonSummary = "Technical Confluence";
     if (p.notes) {
-      if (p.notes.startsWith("Bullish bias:")) {
+      if (p.notes.includes("Bullish bias:")) {
         reasonSummary = "Bullish momentum & structure";
-      } else if (p.notes.startsWith("Bearish bias:")) {
+      } else if (p.notes.includes("Bearish bias:")) {
         reasonSummary = "Bearish rejection & drag";
-      } else if (p.notes.startsWith("Market in low-conviction chop")) {
+      } else if (p.notes.includes("Market in low-conviction chop")) {
         reasonSummary = "Market chop (Abstained)";
+      } else if (p.notes.includes("Abstained:")) {
+        reasonSummary = p.notes.split("Abstained:")[1].split(". ")[0].trim();
       } else if (p.notes.startsWith("contrib=")) {
         reasonSummary = "Calculated multi-factor score";
       } else {
-        reasonSummary = p.notes.split('.')[0];
+        reasonSummary = p.notes.split('. ')[0];
       }
     }
 
@@ -399,9 +409,16 @@ function renderTable(predictions) {
         <td class="py-3 px-4 text-slate-400">${p.signal_source}</td>
         <td class="py-3 px-4">${dirBadge}</td>
         <td class="py-3 px-4">
-          <div class="flex items-center gap-1.5 text-slate-300 group-hover:text-amber-300">
-            <span>${reasonSummary}</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60 font-mono">View Details &rarr;</span>
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-xs font-bold tracking-tight whitespace-nowrap">
+                <span class="text-emerald-400">🐂 ${pBull}% Bull</span>
+                <span class="text-slate-500">·</span>
+                <span class="text-rose-400">🐻 ${pBear}% Bear</span>
+              </span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60 font-mono group-hover:text-amber-300">Details &rarr;</span>
+            </div>
+            <div class="text-[11px] text-slate-400 truncate max-w-xs group-hover:text-slate-300" title="${reasonSummary}">${reasonSummary}</div>
           </div>
         </td>
         <td class="py-3 px-4 text-right font-mono tabular">${p.ref_price.toFixed(2)}</td>
