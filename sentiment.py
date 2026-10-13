@@ -216,12 +216,24 @@ def run(now: datetime | None = None, *, payload: dict | None = None,
         return {"action": "market_closed", "slot_utc": slot_iso,
                 "reason": f"market closed ({cal.session_state(now)})"}
 
-    if not dry_run and not ledger.claim_slot(con, JOB, slot_iso):
-        return {"action": "duplicate_slot_rejected", "slot_utc": slot_iso}
-
     fs = fetch_sources()
     out = {"slot_utc": slot_iso, "sources": len(fs["items"]),
            "feed_status": fs["status"]}
+
+    if payload is not None:
+        # Pre-validate citations and direction before claiming/burning the slot
+        g = validate_citations(payload, fs["items"])
+        if not g["ok"]:
+            out.update({"action": "rejected", "grounding": g,
+                        "reason": "uncited or invalid sources; not recorded"})
+            return out
+        if payload.get("direction") not in ("bullish", "bearish", "no_call"):
+            out.update({"action": "rejected",
+                        "reason": f"invalid direction {payload.get('direction')!r}"})
+            return out
+
+    if not dry_run and not ledger.claim_slot(con, JOB, slot_iso):
+        return {"action": "duplicate_slot_rejected", "slot_utc": slot_iso}
 
     if not fs["items"]:
         if not dry_run:
