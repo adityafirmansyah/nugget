@@ -416,7 +416,6 @@ function renderTable(predictions) {
         <td class="py-3 px-4 font-mono font-medium text-slate-400 group-hover:text-amber-400">#${p.id}</td>
         <td class="py-3 px-4 text-slate-300 whitespace-nowrap">${p.created_wib.slice(5, 16)}</td>
         <td class="py-3 px-4 font-mono text-slate-400">${p.horizon}</td>
-        <td class="py-3 px-4 text-slate-400">${p.signal_source}</td>
         <td class="py-3 px-4">${dirBadge}</td>
         <td class="py-3 px-4">
           <div class="flex flex-col gap-1">
